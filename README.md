@@ -251,7 +251,8 @@ For advanced CLI usage and configuration, see the **[CLI reference](./docs/CLI.m
 
 - **Getting started:** [Guide](./docs/GUIDE.md) · [CLI reference](./docs/CLI.md) ·
   [Configuration paths](./docs/CONFIG_PATHS.md) · [ACP editor integration](./docs/ACP.md) ·
-  [Use from DeepSeek Harness](./docs/DSH.md)
+  [Use from DeepSeek Harness](./docs/DSH.md) ·
+  [Use with Cerebro](./docs/CEREBRO.md)
 - **Features & troubleshooting:** [Subagent profiles](./docs/SUBAGENT_PROFILES.md) ·
   [Context Engine v2](./docs/SESSION_MEMORY_RETRIEVAL.md) ·
   [Capability diagnostics](./docs/CAPABILITY_DIAGNOSTICS.md) ·
