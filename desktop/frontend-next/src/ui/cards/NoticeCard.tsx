@@ -26,8 +26,8 @@ export function NoticeCard({ item, onSettings }: { item: Extract<Item, { t: "not
     : leftoverDetail(item.code, item.detail, vars);
   return (
     <div className="notice-bar" data-lvl={lvl ?? "info"} role={lvl === "err" ? "alert" : "status"}>
-      <span className="sr-only">{t(lvl === "err" ? "出错" : lvl === "warn" ? "警告" : "提示")}：</span>
-      {lvl ? <StudioIcon name="warning" className="nb-ic" aria-hidden="true" /> : <i className="nb-dot" aria-hidden="true" />}
+      <span className="sr-only">{t(lvl === "err" ? "chat.error" : lvl === "warn" ? "chat.warning" : "chat.notice")}：</span>
+      <StudioIcon name={lvl === "err" ? "fail" : lvl === "warn" ? "warning" : "info"} className="nb-ic" aria-hidden="true" />
       <div className="nb-body">
         <span className="t">
           {wording ? t(wording.text, vars) : item.text}
@@ -37,7 +37,7 @@ export function NoticeCard({ item, onSettings }: { item: Extract<Item, { t: "not
           {item.count && item.count > 1 ? <b className="ntimes">×{item.count}</b> : null}
         </span>
         {item.code === "setting_open" && onSettings && (
-          <button className="nbtn" data-action="settings.section" data-value={item.detail ?? ""} onClick={() => onSettings(settingScreen(item.detail ?? ""))}>{t("打开设置")}</button>
+          <button className="nbtn" data-action="settings.section" data-value={item.detail ?? ""} onClick={() => onSettings(settingScreen(item.detail ?? ""))}>{t("chat.open_settings")}</button>
         )}
         {detail && (PERMISSION.has(item.code ?? "")
           ? <code className="nrule" title={item.text}>{item.detail}</code>

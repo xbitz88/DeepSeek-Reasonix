@@ -3,53 +3,8 @@ import { createRoot } from "react-dom/client";
 import { boot as bootLang, t } from "./i18n";
 import { reason } from "./i18n/kernel";
 import { track as trackWidth } from "./ui/viewport";
-import "./styles/tokens.css";
-import "./styles/app.css";
-import "./styles/composition-picker.css";
-import "./styles/dock.css";
-import "./styles/studio.css";
-import "./styles/dialogcenter.css";
-import "./styles/stophint.css";
-import "./styles/phonecomposer.css";
-import "./styles/tips.css";
-import "./styles/skillpin.css";
-import "./styles/waitnote.css";
-import "./styles/bring.css";
-import "./styles/peerthreads.css";
-import "./styles/line.css";
-import "./styles/notice.css";
-import "./styles/peers.css";
-import "./styles/contentmatches.css";
-import "./styles/jsontext.css";
-import "./styles/narrow.css";
-import "./styles/workfold.css";
-import "./styles/workbench-launcher.css";
-import "./styles/feedback.css";
-import "./styles/community.css";
-import "./styles/themes.css";
-import "./styles/sponsor.css";
-import "./styles/chart.css";
-import "./styles/versions.css";
-import "./styles/changedpill.css";
-import "./styles/askskip.css";
-import "./styles/pastekeep.css";
-import "./styles/ctxitems.css";
-import "./styles/sidepanel.css";
-import "./styles/scrolljump.css";
-import "./styles/sessionnotes.css";
-import "./styles/providerpresets.css";
-import "./styles/sidebardrop.css";
-import "./styles/sessionquick.css";
-import "./styles/sessionpin.css";
-import "./styles/treerows.css";
-import "./styles/workbench-changes.css";
-import "./styles/agentrun.css";
-import "./styles/gitgraph.css";
-import "./styles/modelmenu.css";
-import "./styles/composer-menu.css";
-import "./styles/runsignals.css";
-import "./styles/toasts.css";
-import "./styles/overview.css";
+import "./styles/legacy.css";
+import "./design/design.css";
 import { App } from "./ui/App";
 import { SseHub } from "./port/hub";
 import { HttpError } from "./port/http_error";
@@ -65,7 +20,7 @@ import { useStalePage } from "./ui/stale_page";
 import { onRemoteConnectionEnded, remoteConnectionEnded, openRemoteHome, remoteHub, signInAgain, type RemoteEnd } from "./port/cloud_remote";
 
 const failureAction = (view: FailureView) => (view.action === "home" ? openRemoteHome : () => location.reload());
-const failureLabel = (view: FailureView) => (view.action === "home" ? t("打开 reasonix.io") : t("重新连接"));
+const failureLabel = (view: FailureView) => (view.action === "home" ? t("app.open_reasonix_io") : t("app.reconnect"));
 
 function RemoteAwareApp({ hub, remote }: { hub: HubPort; remote: string | null }) {
   const [ended, setEnded] = useState<RemoteEnd | null>(() => (remote ? remoteConnectionEnded() : null));
@@ -81,20 +36,20 @@ function RemoteAwareApp({ hub, remote }: { hub: HubPort; remote: string | null }
       <App hub={hub} />
       {stale && !ended && (
         <RemoteNotice
-          title={t("这个页面不是最新版")}
-          body={t("它是之前打开的旧版本，继续用可能出现莫名的报错。刷新一下就能换成最新版。")}
-          action={t("刷新页面")}
+          title={t("app.this_page_is_not_the")}
+          body={t("app.it_is_an_older_build")}
+          action={t("app.refresh_page")}
           info
           onAction={() => location.reload()}
         />
       )}
       {ended && remote && (
         <RemoteNotice
-          title={reauth ? t("需要重新登录") : specific?.title ?? t("远程连接已断开")}
+          title={reauth ? t("app.sign_in_again") : specific?.title ?? t("app.remote_connection_ended")}
           body={reauth
-            ? t("为了安全，远程控制在登录满 24 小时或退出登录后需要重新登录。")
-            : specific?.body ?? t("这台电脑已停止网页控制。重新连接需要再次验证设备状态。")}
-          action={reauth ? t("重新登录") : specific ? failureLabel(specific) : t("重新连接")}
+            ? t("app.for_security_remote_control_asks")
+            : specific?.body ?? t("app.this_computer_has_stopped_web")}
+          action={reauth ? t("app.sign_in") : specific ? failureLabel(specific) : t("app.reconnect")}
           waitS={specific?.waitS}
           retryWhenOnline={specific?.retryWhenOnline}
           onAction={reauth ? () => void signInAgain(remote) : specific ? failureAction(specific) : () => location.reload()}
@@ -137,7 +92,7 @@ async function pick(): Promise<HubPort> {
   // fixture there would put a scripted session on screen as if it had happened,
   // so only a dev build is allowed to; the import stays dynamic to keep the
   // fixture out of the production bundle.
-  if (!import.meta.env.DEV) throw new Error("连不上内核：/runtimes 没有回应。");
+  if (!import.meta.env.DEV) throw new Error(t("app.cannot_reach_the_kernel_runtimes"));
   const { MockHub } = await import("./port/mock_hub");
   return new MockHub();
 }

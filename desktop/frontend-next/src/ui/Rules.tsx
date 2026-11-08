@@ -13,29 +13,29 @@ type List = "deny" | "ask" | "allow";
 // groups by tool and lets the verdict be changed in place. Filing rules into
 // three separate lists made "this one is too strict" a delete-and-retype.
 const LEVELS: [List, string, string][] = [
-  ["deny", "拒绝", "命中即终止：全部放行下同样拦截，不显示审批框"],
-  ["ask", "询问", "命中即暂停并请求确认，即使已开启自动批准"],
-  ["allow", "放行", "命中后不再请求确认"],
+  ["deny", "common.refuse", "safety.a_match_is_final_it"],
+  ["ask", "safety.ask", "safety.a_match_stops_for_you"],
+  ["allow", "common.allow", "safety.a_match_stops_asking"],
 ];
 
 const MODES: [string, string, string][] = [
-  ["ask", "请求确认", "未被任何规则命中的写入操作，执行前请求一次确认"],
-  ["allow", "放行", "未被命中的写入操作直接执行"],
-  ["deny", "拒绝", "未被命中的写入操作一律不执行"],
+  ["ask", "safety.ask_for_confirmation", "safety.a_write_no_rule_matched"],
+  ["allow", "common.allow", "safety.a_write_matched_by_no"],
+  ["deny", "common.refuse", "safety.a_write_no_list_matched"],
 ];
 
 // The tools worth offering by name. `file_mutation` is not a tool but the gate's
 // own alias for every tool that writes a file, and it is the one most people
 // actually want — so it leads, under the name of what it does.
 const TOOLS: [string, string][] = [
-  ["bash", "命令"],
-  ["file_mutation", "写文件（全部写入工具）"],
-  ["read_file", "读文件"],
-  ["write_file", "整份写入"],
-  ["edit_file", "改动文件"],
-  ["web_fetch", "抓取网页"],
-  ["grep", "全文搜索"],
-  ["glob", "查找文件"],
+  ["bash", "chat.commands"],
+  ["file_mutation", "safety.writing_files_every_write_tool"],
+  ["read_file", "safety.reading_files"],
+  ["write_file", "safety.whole_file_writes"],
+  ["edit_file", "safety.file_edits"],
+  ["web_fetch", "safety.fetching_web_pages"],
+  ["grep", "safety.full_text_search"],
+  ["glob", "safety.finding_files"],
 ];
 
 // A grant a person gave an approval card lands here too, under the group the
@@ -59,20 +59,20 @@ interface Recipe {
 const RECIPES: Recipe[] = [
   {
     id: "secrets",
-    title: "禁止访问 .env",
-    desc: "文件工具读写 .env 一律拒绝。bash 中的 cat 属于另一条路径，本规则不覆盖",
+    title: "safety.keep_env_off_limits",
+    desc: "safety.file_tools_are_refused_outright",
     list: "deny",
     rules: ["file_mutation(*.env*)", "read_file(*.env*)"],
   },
-  { id: "push", title: "禁止推送到远端", desc: "本地修改不受限制，推送始终由你执行", list: "deny", rules: ["bash(git push:*)"] },
+  { id: "push", title: "safety.never_push", desc: "safety.change_anything_locally_pushing_stays", list: "deny", rules: ["bash(git push:*)"] },
   {
     id: "history",
-    title: "禁止改写 git 历史",
-    desc: "rebase 与 reset 可能丢弃尚未推送的提交",
+    title: "safety.never_rewrite_git_history",
+    desc: "safety.rebase_and_reset_can_eat",
     list: "deny",
     rules: ["bash(git rebase:*)", "bash(git reset:*)"],
   },
-  { id: "tests", title: "运行测试无需确认", desc: "测试命令直接放行，其余保持不变", list: "allow", rules: ["bash(go test:*)", "bash(npm test:*)", "bash(pytest:*)"] },
+  { id: "tests", title: "safety.tests_without_asking", desc: "safety.test_commands_go_straight_through", list: "allow", rules: ["bash(go test:*)", "bash(npm test:*)", "bash(pytest:*)"] },
 ];
 
 // A rule is "tool" or "tool(subject)". Splitting it is what lets the tool name
@@ -91,14 +91,14 @@ const joinRule = (tool: string, pattern: string) => (pattern.trim() ? `${tool.tr
 // command, the file tools their path, grep and glob their search pattern — so
 // the same glob means different things per tool and the header has to say which.
 const MATCHING: Record<string, string> = {
-  bash: "按命令的词比对",
-  grep: "比对的是搜索式，而非路径",
-  glob: "比对的是搜索式，而非路径",
-  web_fetch: "比对的是网址",
+  bash: "safety.matched_by_command_words",
+  grep: "safety.matched_against_the_search_pattern",
+  glob: "safety.matched_against_the_search_pattern",
+  web_fetch: "safety.matched_against_the_url",
   Computer: "比对应用 id，放行必须写全；通配符只拦不放",
   Browser: "比对页面来源（协议://主机:端口）",
 };
-const pathMatching = "按路径匹配，* 能跨过 /";
+const pathMatching = "safety.matched_by_path_crosses";
 
 // What is unusual about this one rule — and nothing when there is nothing. The
 // common shape is `x:*`, and printing "commands starting with x" on thirteen of
@@ -106,28 +106,28 @@ const pathMatching = "按路径匹配，* 能跨过 /";
 // differs makes the row that has something to say the one that stands out.
 function odd(tool: string, pattern: string): string {
   const p = pattern.trim();
-  if (!p) return t("这个工具的每一次调用");
+  if (!p) return t("safety.every_call_to_this_tool");
   if (tool === "bash") {
     if (p.endsWith(":*")) return "";
-    if (p.includes("*")) return t("匹配完整命令，而非按词前缀");
-    return t("仅匹配该命令本身，附加任何参数即不匹配");
+    if (p.includes("*")) return t("safety.matches_the_whole_command_not");
+    return t("safety.exactly_this_command_one_more");
   }
   if (p.includes("*")) return "";
-  return MATCHING[tool] ? t("仅匹配该值") : t("仅匹配该路径");
+  return MATCHING[tool] ? t("safety.exactly_this_one_value") : t("safety.exactly_this_one_path");
 }
 
 // The add form is the one place the full sentence belongs: nothing is on screen
 // yet to compare against, and the rule has not been saved.
 function explain(tool: string, pattern: string): string {
   const p = pattern.trim();
-  if (!p) return t("这个工具的每一次调用");
+  if (!p) return t("safety.every_call_to_this_tool");
   if (tool === "bash") {
-    if (p.endsWith(":*")) return t("以 {cmd} 开头的命令，不限参数", { cmd: p.slice(0, -2) });
-    if (p.includes("*")) return t("命令整体匹配 {pat}", { pat: p });
-    return t("仅为 {cmd} 这条命令", { cmd: p });
+    if (p.endsWith(":*")) return t("safety.commands_starting_with_cmd_whatever", { cmd: p.slice(0, -2) });
+    if (p.includes("*")) return t("safety.commands_matching_pat_as_a", { pat: p });
+    return t("safety.exactly_the_command_cmd", { cmd: p });
   }
-  if (p.includes("*")) return t("路径匹配 {pat} 的调用（* 可跨越 /）", { pat: p });
-  return t("仅为 {path} 这个路径", { path: p });
+  if (p.includes("*")) return t("safety.calls_whose_path_matches_pat", { pat: p });
+  return t("safety.exactly_the_path_path", { path: p });
 }
 
 interface Group {
@@ -173,7 +173,7 @@ export function Rules({ port, onChanged }: { port: AgentPort; onChanged: () => v
   const lists: PermissionLists | null = rules && { mode: rules.mode, deny: rules.deny, ask: rules.ask, allow: rules.allow };
   const groups = useMemo(() => (lists ? group(lists, query) : []), [lists, query]);
 
-  if (!rules || !lists) return <div className="empty">{t("无法读取权限配置。")}</div>;
+  if (!rules || !lists) return <div className="empty">{t("safety.cannot_read_the_permission_config")}</div>;
 
   const dormant = new Set((rules.dormant ?? []).map((d) => `${d.list}\u0000${d.rule}`));
   const counts = { deny: rules.deny.length, ask: rules.ask.length, allow: rules.allow.length };
@@ -248,17 +248,17 @@ export function Rules({ port, onChanged }: { port: AgentPort; onChanged: () => v
     <div className="rules">
       {rules.shadowedBy && (
         <div className="find" data-lvl="warn" role="status">
-          <span className="t">{t("当前项目自带权限配置")}</span>
+          <span className="t">{t("safety.this_project_ships_its_own")}</span>
           <span className="why">
-            {t("{path} 中同样声明了 permissions，实际生效的是该文件。此处的修改会被保存，但需待其不再声明后才会生效。", { path: rules.shadowedBy })}
+            {t("safety.path_declares_permissions_too_and", { path: rules.shadowedBy })}
           </span>
         </div>
       )}
 
       {!!rules.dormant?.length && (
         <div className="find" data-lvl="warn" role="status">
-          <span className="t">{t("有 {n} 条规则没有对应的工具，不会生效", { n: rules.dormant.length })}</span>
-          <span className="why">{t("命令要写成 Bash(命令:*)；下方标出的规则可以删除或改写。")}</span>
+          <span className="t">{t("safety.n_rule_s_name_no", { n: rules.dormant.length })}</span>
+          <span className="why">{t("safety.a_shell_command_is_written")}</span>
         </div>
       )}
 
@@ -275,8 +275,8 @@ export function Rules({ port, onChanged }: { port: AgentPort; onChanged: () => v
       </div>
 
       <div className="fallback">
-        <span className="k">{t("其余写入操作")}</span>
-        <div className="seg fit" data-text role="radiogroup" aria-label={t("其余写入操作")}>
+        <span className="k">{t("safety.everything_else_that_writes")}</span>
+        <div className="seg fit" data-text role="radiogroup" aria-label={t("safety.everything_else_that_writes")}>
           {MODES.map(([id, label]) => (
             <button key={id} role="radio" data-action="permissions.mode" data-value={id}
               aria-checked={rules.mode === id} disabled={!!busy}
@@ -290,22 +290,22 @@ export function Rules({ port, onChanged }: { port: AgentPort; onChanged: () => v
 
       {rules.rememberedErrorCode && (
         <div className="find" data-lvl="warn" role="status">
-          <span className="t">{t("已记住的权限规则无法读取")}</span>
-          <span className="why">{t("请检查或修复用户目录中的授权记录文件。")}</span>
+          <span className="t">{t("safety.could_not_read_remembered_permission")}</span>
+          <span className="why">{t("safety.check_or_repair_the_grant")}</span>
           <span className="path">{rules.rememberedPath}</span>
         </div>
       )}
 
       {!!rules.remembered?.length && (
-        <section className="rtable" aria-label={t("当前项目记住的放行规则")}>
-          <div className="rhead">{t("当前项目记住的放行规则")}</div>
+        <section className="rtable" aria-label={t("safety.remembered_allow_rules_for_this")}>
+          <div className="rhead">{t("safety.remembered_allow_rules_for_this")}</div>
           {rules.remembered.map((rule) => (
             <div className="rrow" data-k="allow" key={rule}>
               <i className="dot" aria-hidden="true" />
               <span className="pat"><code>{rule}</code></span>
               <button className="act ghost" data-action="permissions.revoke-remembered" data-target={rule}
-                disabled={!!busy} aria-label={t("收回 {rule}", { rule })}
-                onClick={() => void revokeRemembered(rule)}>{t("收回")}</button>
+                disabled={!!busy} aria-label={t("safety.take_back_rule", { rule })}
+                onClick={() => void revokeRemembered(rule)}>{t("safety.take_back")}</button>
             </div>
           ))}
           <p className="path">{rules.rememberedPath}</p>
@@ -317,19 +317,19 @@ export function Rules({ port, onChanged }: { port: AgentPort; onChanged: () => v
           like three. */}
       <div className="rhead">
         <span className="n">
-          {total ? t("{n} 条规则", { n: total }) : t("尚无额外规则")}
+          {total ? t("common.n_rules", { n: total }) : t("safety.no_rules_of_your_own")}
           {total > 0 && (
             <span className="mix">
-              <i data-k="deny" title={t("拒绝")}>{counts.deny}</i>
-              <i data-k="ask" title={t("询问")}>{counts.ask}</i>
-              <i data-k="allow" title={t("放行")}>{counts.allow}</i>
+              <i data-k="deny" title={t("common.refuse")}>{counts.deny}</i>
+              <i data-k="ask" title={t("safety.ask")}>{counts.ask}</i>
+              <i data-k="allow" title={t("common.allow")}>{counts.allow}</i>
             </span>
           )}
         </span>
         {total > 6 && (
-          <input className="find-rule" value={query} placeholder={t("筛选…")} onChange={(e) => setQuery(e.target.value)} />
+          <input className="find-rule" value={query} placeholder={t("safety.filter")} onChange={(e) => setQuery(e.target.value)} />
         )}
-        <button className="act" onClick={() => setAdding((v) => !v)}>{t(adding ? "取消" : "添加规则")}</button>
+        <button className="act" onClick={() => setAdding((v) => !v)}>{t(adding ? "common.cancel" : "common.add_a_rule")}</button>
       </div>
 
       {adding && <AddRule busy={!!busy} onAdd={(rule, level) => { add(rule, level); setAdding(false); }} />}
@@ -347,35 +347,35 @@ export function Rules({ port, onChanged }: { port: AgentPort; onChanged: () => v
                 <code>{g.tool}</code>
                 <span className="what">{t(TOOL_LABEL.get(g.tool) ?? "")}</span>
                 {!g.rows.every((row) => dormant.has(`${row.level}\u0000${row.rule}`)) && <span className="how">{t(MATCHING[g.tool] ?? pathMatching)}</span>}
-                <span className="cnt">{t("{n} 条", { n: g.rows.length })}</span>
+                <span className="cnt">{t("common.n_2", { n: g.rows.length })}</span>
               </button>
               {!closed &&
                 g.rows.map((row) => (
                   <div className="rrow" key={row.rule} data-k={row.level}>
                     <i className="dot" aria-hidden="true" />
                     <span className="pat">
-                      <code>{row.pattern || t("整个工具")}</code>
+                      <code>{row.pattern || t("safety.the_whole_tool")}</code>
                       {dormant.has(`${row.level}\u0000${row.rule}`)
-                        ? <span className="says" data-dormant="">{t("没有名为 {tool} 的工具，这条规则不会生效", { tool: g.tool })}</span>
+                        ? <span className="says" data-dormant="">{t("safety.no_tool_is_named_tool", { tool: g.tool })}</span>
                         : odd(g.tool, row.pattern) && <span className="says">{odd(g.tool, row.pattern)}</span>}
                     </span>
-                    <select value={row.level} data-action="permissions.rule-level" disabled={!!busy} aria-label={t("{rule} 的处理方式", { rule: row.rule })}
+                    <select data-size="sm" value={row.level} data-action="permissions.rule-level" disabled={!!busy} aria-label={t("safety.what_happens_on_rule", { rule: row.rule })}
                       onChange={(e) => move(row.rule, e.target.value as List)}>
                       {LEVELS.map(([id, label]) => (
                         <option key={id} value={id}>{t(label)}</option>
                       ))}
                     </select>
                     <button className="act ghost" data-action="permissions.remove-rule" data-target={row.rule}
-                      disabled={!!busy} aria-label={t("删除 {rule}", { rule: row.rule })}
+                      disabled={!!busy} aria-label={t("safety.delete_rule", { rule: row.rule })}
                       onClick={() => drop(row.rule)}>
-                      {t("删除")}
+                      {t("common.delete")}
                     </button>
                   </div>
                 ))}
             </section>
           );
         })}
-        {total > 0 && groups.length === 0 && <div className="empty">{t("没有匹配的规则。")}</div>}
+        {total > 0 && groups.length === 0 && <div className="empty">{t("safety.no_rule_matches_that")}</div>}
       </div>
 
       {total > 0 && <p className="path">{rules.path}</p>}
@@ -396,7 +396,7 @@ function AddRule({ busy, onAdd }: { busy: boolean; onAdd: (rule: string, level: 
   return (
     <div className="raddbox">
       <div className="line">
-        <select value={tool} disabled={busy} aria-label={t("工具")} onChange={(e) => setTool(e.target.value)}>
+        <select value={tool} disabled={busy} aria-label={t("common.tool")} onChange={(e) => setTool(e.target.value)}>
           {TOOLS.map(([id, label]) => (
             <option key={id} value={id}>{`${id} · ${t(label)}`}</option>
           ))}
@@ -404,18 +404,18 @@ function AddRule({ busy, onAdd }: { busy: boolean; onAdd: (rule: string, level: 
         <input
           value={pattern}
               data-action-keydown="permissions.add-rule"
-          placeholder={t(tool === "bash" ? "例如 git push:*　（留空 = 整个工具）" : "例如 *.env*　（留空 = 整个工具）")}
+          placeholder={t(tool === "bash" ? "safety.e_g_git_push_empty" : "safety.e_g_env_empty_the")}
           disabled={busy}
           onChange={(e) => setPattern(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && rule && onAdd(rule, level)}
         />
-        <select value={level} disabled={busy} aria-label={t("处理方式")} onChange={(e) => setLevel(e.target.value as List)}>
+        <select value={level} disabled={busy} aria-label={t("safety.verdict")} onChange={(e) => setLevel(e.target.value as List)}>
           {LEVELS.map(([id, label]) => (
             <option key={id} value={id}>{t(label)}</option>
           ))}
         </select>
         <button className="act" data-primary data-action="permissions.add-rule" disabled={busy || !rule} onClick={() => onAdd(rule, level)}>
-          {t("添加")}
+          {t("common.add")}
         </button>
       </div>
       <p className="preview">
@@ -436,16 +436,16 @@ function Granted({ rules, busy, onRevoke }: { rules: string[]; busy: string; onR
   return (
     <section className="granted">
       <div className="g-hd">
-        <span className="n">{t("本次会话另外允许了 {n} 项", { n: rules.length })}</span>
-        <span className="how">{t("只在这个会话里有效，没有写进文件")}</span>
+        <span className="n">{t("safety.n_more_allowed_for_this", { n: rules.length })}</span>
+        <span className="how">{t("safety.this_session_only_not_written")}</span>
         <button className="act" data-action="permissions.revoke-session" data-value="all" disabled={!!busy}
-          onClick={() => onRevoke("")}>{t("全部收回")}</button>
+          onClick={() => onRevoke("")}>{t("safety.take_all_back")}</button>
       </div>
       {rules.map((rule) => (
         <div className="g-row" key={rule}>
           <code>{rule}</code>
           <button className="act" data-action="permissions.revoke-session" data-target={rule} disabled={!!busy}
-            aria-label={t("收回 {rule}", { rule })} onClick={() => onRevoke(rule)}>{t("收回")}</button>
+            aria-label={t("safety.take_back_rule", { rule })} onClick={() => onRevoke(rule)}>{t("safety.take_back")}</button>
         </div>
       ))}
     </section>

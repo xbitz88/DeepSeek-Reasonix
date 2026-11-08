@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
-	"runtime"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -95,22 +93,6 @@ func TestLedgerRequiresReviewCoverageAfterMutation(t *testing.T) {
 	unrelated.Record(ReceiptFromToolCall("review", json.RawMessage(`{"task":"review something else"}`), true, ToolFacts{ReadOnly: true}))
 	if unrelated.HasCompletedReview() {
 		t.Fatal("review that did not inspect the latest changed path must not count")
-	}
-}
-
-func TestLedgerAcceptsCollectedStructuredReviewReport(t *testing.T) {
-	ledger := NewLedger()
-	ledger.Record(ReceiptFromToolCall("edit_file", json.RawMessage(`{"path":"changed.go"}`), true, ToolFacts{WritesNamedPaths: true}))
-	auth := GrantReviewAuthority(ReviewKindReview)
-	ledger.Record(Receipt{ToolName: "review_report", Success: true, ReportKind: ReviewKindReview,
-		ReviewAuthority: &auth, SourceExecutionID: "exec-probe", Args: json.RawMessage(`{
-		"kind":"review",
-		"verdict":"block",
-		"reviewed_paths":["changed.go"],
-		"findings":[{"severity":"critical","summary":"must fix","path":"changed.go"}]
-	}`)})
-	if !ledger.HasCompletedReview() {
-		t.Fatal("a structured report completes the review activity even when its verdict requires follow-up")
 	}
 }
 
@@ -308,24 +290,6 @@ func TestReceiptFromToolCallExtractsCompleteStep(t *testing.T) {
 	}`), false, ToolFacts{ReadOnly: true})
 	if missingResult.StepProof {
 		t.Fatalf("complete_step without result should not count as proof: %+v", missingResult)
-	}
-
-	missingCommand := ReceiptFromToolCall("complete_step", json.RawMessage(`{
-		"step":"Add parser",
-		"result":"parser added",
-		"evidence":[{"kind":"verification","summary":"checked manually"}]
-	}`), false, ToolFacts{ReadOnly: true})
-	if missingCommand.StepProof {
-		t.Fatalf("verification evidence without command should not count as proof: %+v", missingCommand)
-	}
-
-	emptyProof := ReceiptFromToolCall("complete_step", json.RawMessage(`{
-		"step":"Add parser",
-		"result":"parser added",
-		"evidence":[]
-	}`), false, ToolFacts{ReadOnly: true})
-	if emptyProof.StepProof {
-		t.Fatalf("empty complete_step evidence should not count as proof: %+v", emptyProof)
 	}
 }
 
@@ -933,7 +897,7 @@ func TestToolCallMutatesForDeliveryProfile(t *testing.T) {
 	}{
 		{name: "trusted reader", toolName: "read_file", args: `{"path":"a.go"}`, readOnly: true},
 		{name: "file writer", toolName: "edit_file", args: `{"path":"a.go"}`, want: true},
-		{name: "delegated task meta", toolName: "task", args: `{"prompt":"fix it"}`},
+		{name: "delegated task meta", toolName: "spawn_agents", args: `{"tasks":[{"title":"t","task":"fix it"}]}`},
 		{name: "run_skill meta", toolName: "run_skill", args: `{"name":"review"}`},
 		{name: "review meta", toolName: "review", args: `{"task":"review changes"}`},
 		{name: "security_review meta", toolName: "security_review", args: `{"task":"security"}`},
@@ -1319,19 +1283,5 @@ func TestLedgerDeliverySignoffRejectsInspectionCommandMasqueradingAsVerification
 	}`), true, ToolFacts{ReadOnly: true}))
 	if ledger.HasSuccessfulDeliverySignoffAfter(mutation) {
 		t.Fatal("inspection-only git status must not count as delivery verification")
-	}
-}
-
-func TestCitationFormsAnchorAWindowsCitationToTheWorkspace(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("drive-letter paths are absolute only on Windows")
-	}
-	forms := CitationForms(`C:\ws`, "src/a.go")
-	if !slices.Contains(forms, NormalizePath(`C:\ws\src\a.go`)) {
-		t.Fatalf("forms %q miss the workspace path", forms)
-	}
-	forms = CitationForms(`C:\ws`, `c:\WS\src\a.go`)
-	if !slices.Contains(forms, NormalizePath("src/a.go")) {
-		t.Fatalf("forms %q miss the relative path", forms)
 	}
 }

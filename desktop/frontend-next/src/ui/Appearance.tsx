@@ -1,51 +1,34 @@
 import { ApplyNote } from "./Group";
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
-import { effectsMode, onEffectsChange, setEffectsMode, type EffectsMode } from "../state/prefs";
+import { SettingDeep, SettingDeepContext } from "./SettingDeep";
+import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { effectsMode, onEffectsChange, setEffectsMode } from "../state/prefs";
 import type { AgentPort, Appearance as Look, ThemePack } from "../port/port";
-import { ZOOM_PRESETS } from "./zoom";
+import { SIZE_STEPS, ZOOM_PRESETS } from "./zoom";
 import { chord } from "./keys";
 import { host } from "../port/host";
 import { MONO_FAMILIES, TEXT_STEPS, UI_FAMILIES, installed, readSizeOf, readSteps } from "./look";
-import { STORAGE as LANG_KEY, t } from "../i18n";
+import { t } from "../i18n";
 import { pct } from "../i18n/format";
 import { reason } from "../i18n/kernel";
 import { useCrop } from "./useCrop";
-import { Notifications } from "./Notifications";
-import { Folding } from "./Folding";
 import { WindowSection } from "./WindowSection";
-import { LiveGraceSection } from "./LiveGraceSection";
-import { LegacySessionsSection } from "./LegacySessionsSection";
-import { OpenSessionLimitSection } from "./OpenSessionLimitSection";
-import { LiveStreamBudgetSection } from "./LiveStreamBudgetSection";
-import { NewAnswerSection } from "./NewAnswerSection";
-import { SessionQuickSection } from "./SessionQuickSection";
-import { NavEntriesSection } from "./NavEntriesSection";
-import { NavRailSection } from "./NavRailSection";
 import { GraphicsSection } from "./GraphicsSection";
-import { SendShortcut } from "./SendShortcut";
-import { KeysSheet } from "./KeysSheet";
-import { SessionTabsSetting } from "./SessionTabsSetting";
-import { EscStopSetting } from "./EscStopSetting";
-import { PageSleepSetting } from "./PageSleepSetting";
+import { SectionCard } from "./SectionCard";
+import { PillButton, SegChoice, SettingRow } from "./SettingRow";
+import { Switch } from "./Switch";
+import { ThemeModeRow } from "./ThemeModeRow";
 import { ThemeImport } from "./ThemeImport";
 import { ThemeRemove } from "./ThemeRemove";
 import { WallpaperSceneImport } from "./WallpaperSceneImport";
 import { WallpaperVolumeSlider } from "./WallpaperVolumeSlider";
 import { useThemeInventory } from "./useThemeInventory";
 
-// "" follows the machine; the rest are explicit, the same shape the light/dark
-// control uses.
-const LANGS: [string, string][] = [
-  ["", "跟随系统"],
-  ["zh", "中文"],
-  ["en", "英文"],
-];
-
 // Exported because the nav rail names the current one next to the tab.
 export const SCHEMES: [string, string][] = [
-  ["auto", "跟随系统"],
-  ["light", "浅色"],
-  ["dark", "深色"],
+  ["auto", "look.follow_the_system"],
+  ["light", "look.light"],
+  ["dark", "look.dark"],
+  ["scheduled", "look.scheduled"],
 ];
 
 interface Props {
@@ -68,30 +51,23 @@ interface Props {
 // 笔画粗细是另一条轴：颜色调得再亮，400 的汉字在 11px 上仍然是细的。默认跟着
 // 语言走 —— 汉字笔画密，同字号下比拉丁更早糊。
 const WEIGHTS: [string, string, string][] = [
-  ["", "跟随语言", "中文界面使用中等字重，西文使用常规字重"],
-  ["light", "常规", "笔画更细，字距更宽松"],
-  ["heavy", "加粗", "小字号下更扎实，屏幕距离较远或有反光时更易读"],
+  ["", "look.match_the_language", "look.medium_for_chinese_regular_for"],
+  ["light", "look.regular", "look.thinner_strokes_looser_texture"],
+  ["heavy", "look.bolder", "look.firmer_at_small_sizes_and"],
 ];
 
-// Two answers, because there are two: a line short enough that the eye finds
-// the next one without hunting, or a window used to its edge. A step between
-// them would be a number nobody could tell apart from its neighbour.
 const MEASURES: [string, string, string][] = [
-  ["standard", "适宜阅读", "每行长度控制在一眼能回到行首的范围"],
-  ["full", "铺满窗口", "正文跟随窗口宽度，宽屏上不留两侧空白"],
-  ["full-all", "连输入框一起铺满", "正文和输入框都跟随窗口宽度；输入框很宽时一行不易回到行首"],
-];
-
-const EFFECTS: [EffectsMode, string, string][] = [
-  ["full", "完整", "背景模糊、动态天空与颗粒质感全部开启"],
-  ["reduced", "节能", "关闭背景模糊、动态天空与颗粒质感，集成显卡或老旧电脑上更省电"],
+  ["standard", "look.reading", "look.keeps_a_line_short_enough"],
+  ["full", "look.full_width", "look.prose_follows_the_window_with"],
+  ["full-all", "look.full_width_composer_too", "look.prose_and_the_composer_both"],
+  ["custom", "look.custom_percentage", "look.set_the_conversation_and_composer"],
 ];
 
 const CONTRASTS: [string, string, string][] = [
-  ["", "跟随系统", "系统已开启「增强对比度」时使用最强档"],
-  ["soft", "柔和", "正文不易刺眼，长时间阅读更省力"],
-  ["normal", "标准", "介于两者之间"],
-  ["strong", "更强", "环境光较强，或需要更清晰的边界"],
+  ["", "look.follow_the_system", "look.uses_the_strongest_step_when"],
+  ["soft", "look.soft", "look.softer_body_text_easier_over"],
+  ["normal", "look.standard", "look.between_the_two"],
+  ["strong", "look.stronger", "look.bright_surroundings_or_when_edges"],
 ];
 
 // WebKit 的滑块轨道不知道当前值，填充比例得由调用方喂进来。
@@ -104,6 +80,7 @@ export const WALLPAPER_ACCEPT = "image/png,image/jpeg,image/webp,image/avif,imag
 export function Appearance({ port, theme, onTheme, contrast, onContrast, weight, onWeight, reloadThemes, look, onLook }: Props) {
   const { packs, unread, load } = useThemeInventory(port);
   const effects = useSyncExternalStore(onEffectsChange, effectsMode);
+  const deep = useContext(SettingDeepContext);
 
   // Activating repaints through App's own theme effect, so this only refreshes
   // the list and asks App to re-read which pack is active.
@@ -158,6 +135,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
   // Until the kernel has announced its range there is nothing to draw the
   // slider from; it is held inert rather than given a range of its own.
   const zoomRange = look.zoomRange ?? { min: 0, max: 2, step: 1 };
+  const widthRange = look.widthRange ?? { min: 0, max: 2, step: 1 };
   const setPaper = useCallback(
     (patch: Partial<NonNullable<Look["wallpaper"]>>) =>
       look.wallpaper && onLook({ ...look, wallpaper: { ...look.wallpaper, ...patch } }),
@@ -200,26 +178,6 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
   const uiFonts = useMemo(() => installed(UI_FAMILIES), []);
   const monoFonts = useMemo(() => installed(MONO_FAMILIES), []);
 
-  // Applying a language under a running tree would mean every memoised
-  // component subscribing to one, for a setting that changes once in a window's
-  // life. Storing it and reloading is the honest trade.
-  const setLang = useCallback(
-    (next: string) => {
-      localStorage.setItem(LANG_KEY, next);
-      onLook({ ...look, language: next });
-      setTimeout(() => location.reload(), 120);
-    },
-    [look, onLook],
-  );
-  const langNow = localStorage.getItem(LANG_KEY) ?? look.language ?? "";
-  // Read here rather than inside the summary: these are the same three values
-  // the folded blocks render, and a second reading of them is a second answer.
-  const changed = [
-    look.fontUi ? t("字体") : "",
-    weight ? t("文字粗细") : "",
-    contrast ? t("文字对比度") : "",
-    effects === "reduced" ? t("视觉效果") : "",
-  ].filter(Boolean);
 
   return (
     <>
@@ -228,44 +186,31 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
           <span className="t">{failed || unread}</span>
         </div>
       )}
-      <section className="grp" id="set-mode" data-setting="mode">
-        <div className="grp-hd">
-          <h3>{t("明暗")}</h3>
-        </div>
-        <p className="hint">{t("跟随系统时会随系统主题切换；手动选择后将保持固定。")}</p>
-        <div className="grp-items">
-          <div className="seg" data-text role="group" aria-label={t("明暗")}>
-            {SCHEMES.map(([id, name]) => (
-              <button key={id} data-action="appearance.scheme" data-value={id} aria-pressed={theme === id} onClick={() => onTheme(id)}>
-                {t(name)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <ApplyNote id="mode" />
-      </section>
-
+      <SectionCard title={t("settings.theme_card")}>
+        <ThemeModeRow theme={theme} onTheme={onTheme} />
+        <SettingDeep id="scheme" title={t("settings.palette")} hint={t("settings.accent_and_overall_tone")}
+        act={packs.find((p) => p.active)?.name ?? t("common.default")}>
       <section className="grp" id="set-scheme" data-setting="scheme">
         <div className="grp-hd">
-          <h3>{t("界面主题")}</h3>
-          <span className="now">{t("立即生效")}</span>
+          <h3>{t("look.interface_theme")}</h3>
+          <span className="now">{t("look.in_effect_now")}</span>
         </div>
-        <p className="hint">{t("选择工作台的表面色与强调色。成功、警告和失败等状态色保持一致，代码字体在下方单独设置。")}</p>
+        <p className="hint">{t("look.choose_the_workbench_surfaces_and")}</p>
         <div className="grp-items">
-          <div className="palettes" role="group" aria-label={t("界面主题")}>
-            <Swatch name={t("默认")} on={!custom} onPick={() => pick("")} />
+          <div className="palettes" role="group" aria-label={t("look.interface_theme")}>
+            <Swatch name={t("common.default")} on={!custom} onPick={() => pick("")} />
             {featured.map(cell)}
           </div>
           {illustrated.length > 0 && (
             <details className="theme-more">
               <summary>
                 <span>
-                  <b>{t("更多已安装主题")}</b>
-                  <em>{t("插画与背景主题，可随时切回基础主题")}</em>
+                  <b>{t("look.more_installed_themes")}</b>
+                  <em>{t("look.illustrated_and_background_themes_you")}</em>
                 </span>
-                <span className="now">{t("{n} 个", { n: illustrated.length })}</span>
+                <span className="now">{t("common.n", { n: illustrated.length })}</span>
               </summary>
-              <div className="palettes" role="group" aria-label={t("更多已安装主题")}>
+              <div className="palettes" role="group" aria-label={t("look.more_installed_themes")}>
                 {illustrated.map(cell)}
               </div>
             </details>
@@ -275,7 +220,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
               log — so it is here, next to the thing that looks wrong. */}
           {packs.filter((p) => p.warnings?.length).map((p) => (
             <div className="find" data-lvl="warn" key={p.id}>
-              <span className="t">{t("{name} 有几项没生效", { name: p.name })}</span>
+              <span className="t">{t("look.a_few_of_name_s", { name: p.name })}</span>
               {p.warnings?.map((w) => (
                 <span className="why" key={w}>
                   {w}
@@ -287,114 +232,19 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
         </div>
         <ApplyNote id="scheme" />
       </section>
+      </SettingDeep>
 
-      <section className="grp" id="set-code-appearance" data-setting="font">
-        <div className="grp-hd">
-          <h3>{t("代码外观")}</h3>
-        </div>
-        <p className="hint">{t("代码块、命令、差异与工具输出共用这一等宽字体，不跟随界面主题改变。")}</p>
-        <div className="grp-items">
-          <FontPick
-            slot="mono"
-            label={t("等宽字体")}
-            value={look.fontMono ?? ""}
-            options={monoFonts}
-            sample="func main() { fmt.Println(0O1lI) }"
-            onPick={(v) => set({ fontMono: v })}
-          />
-        </div>
-        <ApplyNote id="font" />
-      </section>
-
-      <section className="grp" id="set-size" data-setting="size">
-        <div className="grp-hd">
-          <h3>{t("大小")}</h3>
-        </div>
-        <p className="hint">{t("「界面」会同时缩放边距与控件，「界面文字」只放大侧栏、设置等处的文字，「正文」仅调整对话中的文字大小，三者独立设置。")}</p>
-        {host().inShell() && <p className="hint">{t("键盘：{up} 放大，{down} 缩小，{reset} 恢复标准，同样调整「界面」大小。", { up: chord("+"), down: chord("-"), reset: chord("0") })}</p>}
-        <div className="grp-items">
-          <div className="prow">
-            <span className="tx">{t("界面")}</span>
-            <div className="seg" data-text role="group" aria-label={t("界面大小")}>
-              {ZOOM_PRESETS.map(([v, name]) => (
-                <button key={v} data-action="appearance.zoom" aria-pressed={(look.zoom || 1) === v} onClick={() => set({ zoom: v })}>
-                  {t(name)}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="prow">
-            <span className="tx">{t("微调")}</span>
-            <input
-              className="slider"
-              style={at(look.zoom || 1, zoomRange.min, zoomRange.max)}
-              type="range"
-              min={zoomRange.min}
-              max={zoomRange.max}
-              step={zoomRange.step}
-              disabled={!look.zoomRange}
-              value={look.zoom || 1}
-              aria-label={t("界面大小微调")}
-              data-action="appearance.zoom"
-              onChange={(e) => set({ zoom: Number(e.target.value) })}
-            />
-            <span className="now">{pct(look.zoom || 1)}</span>
-          </div>
-          <div className="prow">
-            <span className="tx">{t("界面文字")}</span>
-            <div className="seg" data-text role="group" aria-label={t("界面文字大小")}>
-              {TEXT_STEPS.map(([v, name]) => (
-                <button key={v} data-action="appearance.text-size" aria-pressed={(look.textSize || 1) === v} onClick={() => set({ textSize: v === 1 ? 0 : v })}>
-                  {t(name)}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="prow">
-            <span className="tx">{t("正文")}</span>
-            <div className="seg" data-text role="group" aria-label={t("正文字号")}>
-              {readSteps().map(([v, name]) => (
-                <button key={v} data-action="appearance.reading-size" aria-pressed={readSizeOf(look.readSize) === v} onClick={() => set({ readSize: v })}>
-                  {t(name)}
-                </button>
-              ))}
-            </div>
-          </div>
-          {/* Beside the size because they are one question asked twice: how big
-              the letters are, and how far they run before the eye comes back. */}
-          <div className="prow">
-            <span className="tx">{t("行宽")}</span>
-            <div className="seg" data-text role="group" aria-label={t("正文行宽")}>
-              {MEASURES.map(([id, name, why]) => (
-                <button key={id} data-action="appearance.measure" data-value={id}
-                  aria-pressed={(look.width || "standard") === id} title={t(why)} onClick={() => set({ width: id })}>
-                  {t(name)}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-        <p className="hint">{t("行宽只管正文：代码、命令与工具输出始终占满可用宽度。")}</p>
-        <ApplyNote id="size" />
-      </section>
-
-      <details className="advset personal">
-        <summary>
-          <span className="tx">
-            <span className="lb">{t("更多个性化")}</span>
-            <span className="ds">{look.wallpaper ? t("已设置自定义壁纸") : t("壁纸与背景位置")}</span>
-          </span>
-        </summary>
+        <SettingDeep id="wallpaper" title={t("look.wallpaper")} hint={t("settings.chat_background_image_or_video")} act={t("settings.choose_wallpaper")}>
       <section className="grp" id="set-wallpaper" data-setting="wallpaper">
         <div className="grp-hd">
-          <h3>{t("壁纸")}</h3>
+          <h3>{t("look.wallpaper")}</h3>
           {look.wallpaper && (
               <button className="now nowbtn" data-action="wallpaper.remove" onClick={dropPaper}>
-              {t("移除")}
+              {t("common.remove")}
             </button>
           )}
         </div>
-        <p className="hint">{t("壁纸只显示在窗口的空白区域，卡片和输入框保持不透明以确保文字清晰。任务运行时壁纸会自动降低透明度。")}</p>
+        <p className="hint">{t("look.the_image_fills_only_the")}</p>
         <div className="grp-items">
           <input
             ref={file}
@@ -413,7 +263,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
                 <path d="M8 3.7v8.6M3.7 8h8.6" />
               </svg>
             </span>
-            {t(look.wallpaper ? "换一张…" : "选择图片或视频…")}
+            {t(look.wallpaper ? "look.choose_another" : "look.choose_an_image_or_video")}
           </button>
           <WallpaperSceneImport port={port} look={look} onLook={onLook} setPaper={setPaper} onError={setFailed} />
           {/* Composited the way the window is: the picture, then page colour
@@ -422,6 +272,8 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
           {look.wallpaper && (
             <div
               className="paperview"
+              role="img"
+              aria-label={t("look.wallpaper")}
               ref={setView}
               style={{
                 backgroundImage: look.wallpaper.kind === "video" ? undefined : `url("${look.wallpaper.url}")`,
@@ -445,7 +297,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
           {look.wallpaper && (
             <>
               <label className="prow">
-                <span className="tx">{t("浓度")}</span>
+                <span className="tx">{t("look.strength")}</span>
                 <input
                   className="slider"
                   style={at(look.wallpaper.opacity, 0.05, 1)}
@@ -461,7 +313,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
                 <span className="now">{pct(look.wallpaper.opacity)}</span>
               </label>
               <label className="prow">
-                <span className="tx">{t("压暗")}</span>
+                <span className="tx">{t("look.dim")}</span>
                 <input
                   className="slider"
                   style={at(look.wallpaper.dim, 0, 1)}
@@ -477,7 +329,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
                 <span className="now">{pct(look.wallpaper.dim)}</span>
               </label>
               <label className="prow" data-idle={crop.x ? undefined : ""}>
-                <span className="tx">{t("横向焦点")}</span>
+                <span className="tx">{t("look.horizontal_focus")}</span>
                 <input
                   className="slider"
                   style={at(look.wallpaper.focusX, 0, 1)}
@@ -494,7 +346,7 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
                 <span className="now">{pct(look.wallpaper.focusX)}</span>
               </label>
               <label className="prow" data-idle={crop.y ? undefined : ""}>
-                <span className="tx">{t("纵向焦点")}</span>
+                <span className="tx">{t("look.vertical_focus")}</span>
                 <input
                   className="slider"
                   style={at(look.wallpaper.focusY, 0, 1)}
@@ -516,10 +368,10 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
               {crop.known && !(crop.x && crop.y) && (
                 <p className="note">
                   {crop.x
-                    ? t("当前窗口尺寸下，此壁纸只有左右会被裁剪，上下正好填满，因此纵向焦点无法调整。")
+                    ? t("look.at_the_current_window_size_2")
                     : crop.y
-                      ? t("当前窗口尺寸下，此壁纸只有上下会被裁剪，左右正好填满，因此横向焦点无法调整。")
-                      : t("此壁纸与窗口宽高比一致，四边均未裁剪；改变窗口尺寸后才可调整焦点。")}
+                      ? t("look.at_the_current_window_size")
+                      : t("look.this_wallpaper_matches_the_windows")}
                 </p>
               )}
             </>
@@ -527,125 +379,151 @@ export function Appearance({ port, theme, onTheme, contrast, onContrast, weight,
         </div>
         <ApplyNote id="wallpaper" />
       </section>
-      </details>
-
-      <section className="grp" id="set-language" data-setting="language">
-        <div className="grp-hd">
-          <h3>{t("语言")}</h3>
-        </div>
-        <p className="hint">
-          {t("界面显示语言。模型回复所用的语言与此设置无关，将跟随你发送消息时使用的语言。")}
-        </p>
-        <div className="grp-items">
-          <div className="seg" data-text role="group" aria-label={t("语言")}>
-            {LANGS.map(([id, name]) => (
-              <button key={id} data-action="appearance.language" data-value={id} aria-pressed={langNow === id} onClick={() => setLang(id)}>
-                {t(name)}
-              </button>
-            ))}
-          </div>
-          <p className="note">{t("语言更改需重启窗口后生效")}</p>
-        </div>
-        <ApplyNote id="language" />
-      </section>
 
 
-      <WindowSection port={port} />
-      <NavRailSection />
-      <NavEntriesSection />
-      <LiveGraceSection />
-      <LegacySessionsSection />
-      <OpenSessionLimitSection />
-      <LiveStreamBudgetSection />
-      <SessionQuickSection />
-      <NewAnswerSection />
-      <GraphicsSection />
-      <SendShortcut />
-      <KeysSheet />
-      <EscStopSetting />
-      <PageSleepSetting />
-      <SessionTabsSetting />
-      <Folding />
-      <Notifications port={port} />
 
-      {/* What makes this page read as a console is that all of it arrives at
-          once, not that any one control is obscure. The summary says what is
-          folded and whether it has been changed — a disclosure hiding a value
-          somebody set is a screen disagreeing with the window itself. */}
-      <details className="advset appearance-advanced">
-        <summary className="grp" id="set-advanced-appearance" data-setting="advanced-appearance">
-          <h3 className="grp-hd"><span>{t("高级外观")}</span></h3>
-          <span className="hint">{changed.length ? t("已修改：{list}", { list: changed.join(" · ") }) : t("字体、文字粗细、文字对比度、视觉效果")}</span>
-        </summary>
-        <section className="grp" id="set-font" data-setting="font">
-          <div className="grp-hd">
-            <h3>{t("字体")}</h3>
-          </div>
-          <p className="hint">{t("可直接输入字体名称，或选择本机已安装的字体。下方文本会实时预览所选字体；若字体不可用，将自动使用默认字体。")}</p>
-          <div className="grp-items">
-            <FontPick
+        </SettingDeep>
+        <SettingRow id="effects" title={t("look.visual_effects")} desc={t("settings.frosted_glass_glow_effects")}>
+          <Switch on={effects === "full"} label={t("look.visual_effects")} data-action="appearance.effects" data-value={effects}
+            onClick={() => setEffectsMode(effects === "full" ? "reduced" : "full")} />
+        </SettingRow>
+        {deep.pages && (
+          <SettingRow id="advanced-look" title={t("look.advanced_look")} desc={t("look.import_themes_custom_colours")}>
+            <PillButton action="settings.open-page" target="scheme" onClick={() => deep.go("scheme")}>{t("look.advanced_look")}</PillButton>
+          </SettingRow>
+        )}
+      </SectionCard>
+      <SectionCard title={t("settings.text_card")}>
+        <SettingDeep id="font" title={t("look.typeface")} hint={t("settings.interface_and_code_typeface")} act={t("settings.change")}>
+          <section className="grp" id="set-font" data-setting="font">
+            <div className="grp-hd">
+              <h3>{t("look.typeface")}</h3>
+            </div>
+            <p className="hint">{t("look.enter_a_typeface_name_or")}</p>
+            <div className="grp-items">
+              <FontPick
               slot="ui"
-              label={t("界面")}
+              label={t("look.interface")}
               value={look.fontUi ?? ""}
               options={uiFonts}
-              sample={t("字体预览 · 中文 Aa Bb 0123")}
+              sample={t("look.typeface_preview_aa_bb_0123")}
               onPick={(v) => set({ fontUi: v })}
             />
-          </div>
-          <ApplyNote id="font" />
-        </section>
-
-        <section className="grp" id="set-weight" data-setting="weight">
-          <div className="grp-hd">
-            <h3>{t("文字粗细")}</h3>
-          </div>
-          <p className="hint">{t("调整文字的笔画粗细。中文笔画密集，在小字号下加粗有助于提升清晰度。")}</p>
-          <div className="grp-items">
-            <div className="seg" data-text role="group" aria-label={t("文字粗细")}>
-              {WEIGHTS.map(([id, name, why]) => (
-                <button key={id || "auto"} data-action="appearance.weight" data-value={id || "auto"} aria-pressed={weight === id} title={t(why)} onClick={() => onWeight(id)}>
+              <FontPick
+            slot="mono"
+            label={t("look.monospace_font")}
+            value={look.fontMono ?? ""}
+            options={monoFonts}
+            sample="func main() { fmt.Println(0O1lI) }"
+            onPick={(v) => set({ fontMono: v })}
+          />
+            </div>
+            <ApplyNote id="font" />
+          </section>
+        </SettingDeep>
+        <SettingDeep id="size" title={t("look.size")} hint={t("settings.overall_text_size")} act={t("settings.adjust")} ctl={<SegChoice<string> label={t("look.interface_size")} value={String(look.zoom || 1)} action="appearance.zoom" onPick={(v) => set({ zoom: Number(v) })} options={SIZE_STEPS.map(([v, name]) => [String(v), t(name)] as const)} />}>
+      <section className="grp" id="set-size" data-setting="size">
+        <div className="grp-hd">
+          <h3>{t("look.size")}</h3>
+        </div>
+        <p className="hint">{t("look.interface_scales_spacing_and_controls")}</p>
+        {host().inShell() && <p className="hint">{t("look.keyboard_up_larger_down_smaller", { up: chord("+"), down: chord("-"), reset: chord("0") })}</p>}
+        <div className="grp-items">
+          <div className="prow">
+            <span className="tx">{t("look.interface")}</span>
+            <div className="seg" data-text role="group" aria-label={t("look.interface_size")}>
+              {ZOOM_PRESETS.map(([v, name]) => (
+                <button key={v} data-action="appearance.zoom" aria-pressed={(look.zoom || 1) === v} onClick={() => set({ zoom: v })}>
                   {t(name)}
                 </button>
               ))}
             </div>
           </div>
-          <ApplyNote id="weight" />
-        </section>
-
-        <section className="grp" id="set-effects" data-setting="effects">
-          <div className="grp-hd">
-            <h3>{t("视觉效果")}</h3>
+          <div className="prow">
+            <span className="tx">{t("look.fine_tune")}</span>
+            <input
+              className="slider"
+              style={at(look.zoom || 1, zoomRange.min, zoomRange.max)}
+              type="range"
+              min={zoomRange.min}
+              max={zoomRange.max}
+              step={zoomRange.step}
+              disabled={!look.zoomRange}
+              value={look.zoom || 1}
+              aria-label={t("look.fine_tune_interface_size")}
+              data-action="appearance.zoom"
+              onChange={(e) => set({ zoom: Number(e.target.value) })}
+            />
+            <span className="now">{pct(look.zoom || 1)}</span>
           </div>
-          <p className="hint">{t("窗口持续占用显卡时，改为「节能」：界面不变，只去掉磨砂玻璃、动态天空和颗粒这几层。")}</p>
-          <div className="grp-items">
-            <div className="seg" data-text role="group" aria-label={t("视觉效果")}>
-              {EFFECTS.map(([id, name, why]) => (
-                <button key={id} data-action="appearance.effects" data-value={id} aria-pressed={effects === id} title={t(why)} onClick={() => setEffectsMode(id)}>
+          <div className="prow">
+            <span className="tx">{t("look.interface_text")}</span>
+            <div className="seg" data-text role="group" aria-label={t("look.interface_text_size")}>
+              {TEXT_STEPS.map(([v, name]) => (
+                <button key={v} data-action="appearance.text-size" aria-pressed={(look.textSize || 1) === v} onClick={() => set({ textSize: v === 1 ? 0 : v })}>
                   {t(name)}
                 </button>
               ))}
             </div>
           </div>
-          <ApplyNote id="effects" />
-        </section>
-
-        <section className="grp" id="set-contrast" data-setting="contrast">
-          <div className="grp-hd">
-            <h3>{t("文字对比度")}</h3>
-          </div>
-          <p className="hint">{t("同时调整正文与次要文字的对比度。深色主题下若觉得刺眼，可调向「柔和」。")}</p>
-          <div className="grp-items">
-            <div className="seg" data-text role="group" aria-label={t("文字对比度")}>
-              {CONTRASTS.map(([id, name, why]) => (
-                <button key={id || "auto"} data-action="appearance.contrast" data-value={id || "auto"} aria-pressed={contrast === id} title={t(why)} onClick={() => onContrast(id)}>
+          <div className="prow">
+            <span className="tx">{t("common.body_text")}</span>
+            <div className="seg" data-text role="group" aria-label={t("look.body_text_size")}>
+              {readSteps().map(([v, name]) => (
+                <button key={v} data-action="appearance.reading-size" aria-pressed={readSizeOf(look.readSize) === v} onClick={() => set({ readSize: v })}>
                   {t(name)}
                 </button>
               ))}
             </div>
           </div>
-          <ApplyNote id="contrast" />
-        </section>
-      </details>
+          <div className="prow">
+            <span className="tx">{t("look.line_width")}</span>
+            <div className="seg" data-text role="group" aria-label={t("look.body_line_width")}>
+              {MEASURES.map(([id, name, why]) => (
+                <button key={id} data-action="appearance.measure" data-value={id}
+                  aria-pressed={(look.width || "standard") === id} title={t(why)}
+                  disabled={id === "custom" && !look.widthRange} onClick={() => set({ width: id })}>
+                  {t(name)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {look.width === "custom" && (
+            <div className="prow">
+              <span className="tx">{t("look.conversation_width")}</span>
+              <input className="slider" type="range"
+                style={at(look.widthPercent ?? 1, widthRange.min, widthRange.max)}
+                min={widthRange.min} max={widthRange.max} step={widthRange.step}
+                disabled={!look.widthRange} value={look.widthPercent ?? 1}
+                aria-label={t("look.conversation_width")} aria-valuetext={pct((look.widthPercent ?? 1) / 100)}
+                data-action="appearance.measure" data-value="custom"
+                onChange={(e) => set({ widthPercent: Number(e.target.value) })} />
+              <span className="now">{pct((look.widthPercent ?? 1) / 100)}</span>
+            </div>
+          )}
+        </div>
+        <p className="hint">{t(look.width === "custom"
+          ? "look.custom_percentage_resizes_both_the"
+          : "look.line_width_applies_to_prose")}</p>
+        <ApplyNote id="size" />
+      </section>
+
+        </SettingDeep>
+        <SettingRow id="weight" title={t("look.text_weight")} desc={t("settings.weight_of_text")}>
+          <SegChoice<string> label={t("look.text_weight")} value={weight} action="appearance.weight" onPick={onWeight}
+            options={WEIGHTS.map(([id, name]) => [id, t(name)] as const)} />
+        </SettingRow>
+        <SettingRow id="contrast" title={t("look.text_contrast")} desc={t("settings.contrast_between_text_and_background")}>
+          <SegChoice<string> label={t("look.text_contrast")} value={contrast} action="appearance.contrast" onPick={onContrast}
+            options={CONTRASTS.map(([id, name]) => [id, t(name)] as const)} />
+        </SettingRow>
+      </SectionCard>
+      <SectionCard title={t("common.window")}>
+        <SettingDeep id="window" title={t("common.window")} hint={t("settings.remember_window_position_and_size")} act={t("settings.change")}>
+          <WindowSection port={port} />
+        </SettingDeep>
+        <GraphicsSection />
+      </SectionCard>
     </>
   );
 }
@@ -676,7 +554,7 @@ function FontPick({
           className="fontown"
           list={list}
           value={value}
-          placeholder={options.length ? t("默认 · 本机有 {n} 个可选", { n: options.length }) : t("默认")}
+          placeholder={options.length ? t("look.default_n_available_on_this", { n: options.length }) : t("common.default")}
           spellCheck={false}
           autoComplete="off"
           data-action="appearance.font"
@@ -689,8 +567,8 @@ function FontPick({
           ))}
         </datalist>
         {value && (
-          <button className="nowbtn" data-action="appearance.font" data-target={slot} data-value="default" onClick={() => onPick("")} title={t("恢复默认字体")}>
-            {t("清除")}
+          <button className="nowbtn" data-action="appearance.font" data-target={slot} data-value="default" onClick={() => onPick("")} title={t("look.back_to_the_default_typeface")}>
+            {t("common.clear_2")}
           </button>
         )}
       </div>
@@ -752,7 +630,7 @@ function Swatch({
       </span>
       <span className="pal-nm">
         <b>{name}</b>
-        <em>{pack ? pack.author || t("第三方") : t("内置")}</em>
+        <em>{pack ? pack.author || t("look.third_party") : t("common.built_in")}</em>
       </span>
     </button>
   );

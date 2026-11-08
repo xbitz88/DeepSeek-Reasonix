@@ -37,8 +37,8 @@ describe("what a settings block says about itself", () => {
   });
 
   it("carries the scope as data, not only as a sentence", () => {
-    const { container } = render(<Group id="preset" title="执行设定" />);
-    expect(container.querySelector(".apply")?.getAttribute("data-scope")).toBe("session");
+    const { container } = render(<Group id="session-dir" title="执行设定" />);
+    expect(container.querySelector(".apply")?.getAttribute("data-scope")).toBe("workspace");
   });
 });
 
@@ -83,7 +83,7 @@ describe("the search result, which is where a setting has no page around it", ()
     expect(src("Settings.tsx")).toMatch(/import \{ Group, SCOPE_SAID \} from "\.\/Group"/);
     // One table, defined once. A second copy is how the block and the result
     // come to disagree about what a setting owns.
-    expect(src("Group.tsx").match(/SCOPE_SAID[^=]*=/g)?.length ?? 0).toBe(1);
+    expect(src("Group.tsx").match(/const SCOPE_SAID[^=]*=/g)?.length ?? 0).toBe(1);
   });
 
   // The words live in one place. Checked on the taxonomy's own ids rather than

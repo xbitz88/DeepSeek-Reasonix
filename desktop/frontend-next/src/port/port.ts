@@ -1,8 +1,7 @@
 import type { SurfaceActionRequest, SurfaceActionRecord } from "./surface";
 import type { AgentComposition, AgentPresetVersion, AgentPresetCatalog, CompositionSummary } from "./composition";
 export type * from "./composition";
-import { DeliveryError, HttpError } from "./http_error";
-import type { DeliveryFault } from "./http_error";
+import { DeliveryError, HttpError, type DeliveryFault } from "./http_error";
 import type { SideProgress } from "./side";
 
 /** What `subscribe` hands back: the disposer, and where the transport has one, a
@@ -19,11 +18,11 @@ export type * from "./backup";
 export type { AdjudicationEntry, AdjudicationState, Adjudications } from "./adjudication";
 import type { HookCatalog, HookDryRun, HookEntry, HookEventInfo, HookSource } from "./hook";
 import type { CapabilityScope, McpCatalog, McpDraft, McpDraftServer, McpEntry, McpInstallResult, McpInstallScope, McpLoad, McpRisk, McpTool, ScopeLayer } from "./mcp";
-import type { MemoryCatalog, MemoryEdit, MemoryEntry, UnreadableMemory } from "./memory";
-import type { UsageQuery, UsageReport } from "./usage";
+import type { MemoryHoldPort, MemoryCatalog, MemoryEdit, MemoryEntry, UnreadableMemory } from "./memory";
+import type { UploadUsagePort, UsageQuery, UsageReport } from "./usage";
 export { DEFAULT_USAGE_DAYS } from "./usage";
 export type { MemoryEdit } from "./memory";
-export type { Money, UsageDay, UsageHour, UsageModel, UsageProvider, UsageQuery, UsageReport } from "./usage";
+export type { Money, UploadDay, UploadProvider, UploadReport, UsageDay, UsageHour, UsageModel, UsageProvider, UsageQuery, UsageReport } from "./usage";
 import type { CompactionSettings, Completion, CompletionItem, ModelEntry, ModelMode, ModelPrice, RoleAssignments, RoleOverride } from "./model";
 import type { NetworkProbe, NetworkSettings } from "./network";
 import type { ApprovalDefault, ApprovalMode, WorkspaceTrust, ApprovalVerdict, BrowserTab, Checkpoint, HistoryMessage, HostTodo, JobEntry, JobOutput, Preset, RewindPlan, ToolOutputPage, RewindResult, RewindUndo, RewindScope, SessionEntry, SessionStatus, SessionUsage, SourceUsage, WalletLine, WalletReading, PlanAction } from "./session";
@@ -32,10 +31,8 @@ import type { SkillCatalog, SkillEntry, SkillUpdateChange, SkillUpdatePlan } fro
 import type { SubagentRun, SubagentTranscript } from "./subagent";
 import type { StudioCrash, StudioLogs, UpdateMode, UpdateProgress, VersionEntry, VersionHub, VersionNotes } from "./version";
 import type { ChangeDiff, CommitFile, CommitProposal, CommitRequest, CommitResult, DiscardRequest, GitCommitFiles, GitRepos, PushRequest, PushResult, PushPlan, StageRequest, WorkspaceBranch, WorkspaceBranches, WorkspaceChange, WorkspaceChanges, WorkspaceEntry, WorkspaceFile, WorkspaceFiles, WorkspaceGit, WorkspaceInfo, WorkspacePreviewPort } from "./workspace";
+import type { SessionTailPort } from "./session_tail";
 
-// The port is one contract; its subjects each keep their own file, the way the
-// wire and the layers below already do. This is where a reader still finds
-// them all.
 export type { AccountState, AccountUser, ApprovalDefault, ApprovalMode, ApprovalVerdict, WorkspaceTrust, CapabilityScope,
   Checkpoint, CompactionSettings, Completion, CompletionItem, ContextBreakdown, DeviceGrant, HistoryMessage, HostTodo, BrowserTab,
   HookCatalog, HookDryRun, HookEntry, HookEventInfo, HookSource, JobEntry, JobOutput, McpCatalog, McpDraft,
@@ -49,10 +46,11 @@ import type { ExecutionGraphRead, TrajectoryRead, WireEvent } from "./wire";
 import type { PluginExport, PluginInstallRequest, PluginPackage, PluginPlan } from "./plugin";
 import type { MarketDetail, MarketList, MarketOwnRequest, MarketPackage, MarketPlan, MarketPublished, MarketQuery, MarketRequest, MarketSubmission, MarketVote } from "./market";
 import type { Appearance, SceneFolder, ThemeImport, ThemePack } from "./look";
-import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, BrowserToolsSettings, SubagentClaimsSettings, SubagentSteerSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, DisplayCurrencyMode, DisplayCurrencySettings, PermissionLists, PermissionRules, ProgressWatchSettings, SandboxSettings, WorkspaceRoots, ReceiptSettings } from "./boundary";
+import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, BrowserToolsSettings, SubagentClaimsSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, DisplayCurrencyMode, DisplayCurrencySettings, PermissionLists, PermissionRules, ProgressWatchSettings, SandboxSettings, WorkspaceRoots, ChangedSettings } from "./boundary";
 import type { ScheduleBoard, ScheduleDraft, SchedulePreview, ScheduleResultView, ScheduleView } from "./schedule";
-import type { Protocol, ProviderCheck, ProviderCheckDraft, ProviderDraft, ProviderEdit, ProviderEntry, ProviderModelCheck, ProviderModelCheckRequest, ProviderProbe, ProviderSetup, ProviderRemoval, ProviderPreset, ProviderPresetInstall } from "./provider";
-export type { ModelEffort, ModelLimit, ModelRate, Protocol, ProviderCheck, ProviderCheckDraft, ProviderDraft, ProviderEdit, ProviderEntry, ProviderModelCheck, ProviderModelCheckRequest, ProviderProbe, ProviderSetup, ProviderRemoval, ProviderPreset, ProviderPresetInstall } from "./provider";
+import type { Protocol, ProviderHealth, ProviderCheck, ProviderCheckDraft, ProviderDraft, ProviderEdit, ProviderEntry, ProviderModelCheck, ProviderModelCheckRequest, ProviderProbe, ProviderSetup, ProviderRemoval, ProviderPreset, ProviderPresetInstall } from "./provider";
+export type { ModelEffort, ModelLimit, ModelRate, Protocol, ProviderHealth, ProviderCheck, ProviderCheckDraft, ProviderDraft, ProviderEdit, ProviderEntry, ProviderModelCheck, ProviderModelCheckRequest, ProviderProbe, ProviderSetup, ProviderRemoval, ProviderPreset, ProviderPresetInstall } from "./provider";
+import type { TerminalPort } from "./terminal";
 import type { StoragePlan, StorageQuery, StorageState } from "./storage";
 import type { FeedbackBoard, FeedbackBoardMe, FeedbackEnv, FeedbackImage, FeedbackLinkedInstall, FeedbackMine, FeedbackReceipt, FeedbackReplyReceipt, FeedbackRequest } from "./feedback";
 import type { PersonaDraft, PersonaSettings, PresentFilesSettings } from "./boundary";
@@ -183,7 +181,7 @@ export interface TrayPrefs {
   closeToTray: boolean;
 }
 
-export interface AgentPort extends WorkspacePreviewPort {
+export interface AgentPort extends MemoryHoldPort, WorkspacePreviewPort, SessionTailPort, UploadUsagePort, TerminalPort {
   providerSetup(): Promise<ProviderSetup | null>;
   saveProviderKey(apiKey: string): Promise<void>;
   // The models that answer the job asked about; "chat" when none is named.
@@ -260,6 +258,7 @@ export interface AgentPort extends WorkspacePreviewPort {
   usage(query: UsageQuery): Promise<UsageReport>;
   // Archives rather than deletes: a fact dropped by mistake stays recoverable.
   forgetMemory(name: string): Promise<void>;
+  confirmMemory(name: string): Promise<void>;
   saveMemory(edit: MemoryEdit): Promise<void>;
   // Every save keeps the version it replaced. These are what let a reader see
   // that history and step back into it; restoring appends rather than rewinds,
@@ -303,8 +302,6 @@ export interface AgentPort extends WorkspacePreviewPort {
   savePresentFiles(enabled: boolean): Promise<PresentFilesSettings>;
   subagentClaims(): Promise<SubagentClaimsSettings>;
   saveSubagentClaims(optimistic: boolean): Promise<SubagentClaimsSettings>;
-  subagentSteerSettings(): Promise<SubagentSteerSettings>;
-  saveSubagentSteerSettings(maxBytes: number, perMinute: number): Promise<SubagentSteerSettings>;
   planApproval(): Promise<PlanApprovalSettings>;
   savePlanApproval(auto: boolean): Promise<PlanApprovalSettings>;
   defaultMode(): Promise<DefaultModeSettings>;
@@ -335,6 +332,7 @@ export interface AgentPort extends WorkspacePreviewPort {
   feedbackLevelNotices(): Promise<FeedbackLevelNotices>;
   saveFeedbackLevelNotices(enabled: boolean): Promise<FeedbackLevelNotices>;
   foldWorkSettings(): Promise<FoldWorkSettings>;
+  changedSettings(): Promise<ChangedSettings>;
   saveFoldWorkSettings(fold: boolean): Promise<FoldWorkSettings>;
   turnNarrationSettings(): Promise<TurnNarrationSettings>;
   saveTurnNarrationSettings(level: TurnNarrationSettings["level"]): Promise<TurnNarrationSettings>;
@@ -365,8 +363,6 @@ export interface AgentPort extends WorkspacePreviewPort {
   // The persona is part of the cache-stable prefix, composed once at boot:
   // saving is written now and read by the next session, not this one's runtime.
   savePersonaSettings(s: PersonaDraft): Promise<PersonaSettings>;
-  receiptSettings(): Promise<ReceiptSettings>;
-  saveReceiptSettings(show: boolean): Promise<ReceiptSettings>;
   // null in a browser tab: there is no window to keep running.
   trayPrefs(): Promise<TrayPrefs | null>;
   setTrayPrefs(icon: boolean, closeToTray: boolean): Promise<TrayPrefs | null>;
@@ -434,6 +430,9 @@ export interface AgentPort extends WorkspacePreviewPort {
   // Re-probes what is already saved, so "is the key still good, and is this
   // still the protocol we recorded" is one button rather than a re-add.
   checkProvider(name: string, draft?: ProviderCheckDraft): Promise<ProviderCheck>;
+  providerHealth(name: string): Promise<ProviderHealth>;
+  providerHealthSettings(): Promise<import("./provider").ProviderHealthSettings>;
+  saveProviderHealthSettings(enabled: boolean): Promise<import("./provider").ProviderHealthSettings>;
   checkProviderModel(request: ProviderModelCheckRequest): Promise<ProviderModelCheck>;
   saveProvider(draft: ProviderDraft): Promise<void>;
   // Changes only the fields the form owns. Saving a whole entry instead would
@@ -717,7 +716,6 @@ export interface AgentPort extends WorkspacePreviewPort {
   // The person's guidance to a sub-agent that is still running, read at its next
   // tool call. Refused with a code when it is not running (subagent.not_running),
   // is empty, over the size or rate limit, or is another conversation's.
-  steerSubagent(ref: string, text: string): Promise<void>;
   // The end of a running job's output, for the person looking at it. It does
   // not take output from the model's own reader; a job that ended is refused
   // (job.not_running).
@@ -795,6 +793,5 @@ export interface AgentPort extends WorkspacePreviewPort {
   // "" turns the session's model mode off.
   setModelMode(mode: string): Promise<void>;
   compaction(): Promise<CompactionSettings>;
-  saveCompaction(softLimitTokens: number): Promise<CompactionSettings>;
   setGoal(text: string): Promise<void>;
 }

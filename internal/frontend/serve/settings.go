@@ -261,6 +261,10 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if j := s.ctl().Jobs(); len(j) > 0 {
 		sess["jobs"] = j
 	}
+	// Apart from jobs, which readers take to be the running ones.
+	if j := s.ctl().EndedJobs(); len(j) > 0 {
+		sess["endedJobs"] = j
+	}
 	// Additive: present only where the vendor's own schedule bills the model's
 	// rate, so a custom price or a relay shows no window it does not charge.
 	if tariff, ok := s.ctl().Tariff(); ok {
@@ -276,7 +280,10 @@ type modelEntry struct {
 	DisplayName string `json:"displayName,omitempty"`
 	Model       string `json:"model"`
 	ModelAlias  string `json:"modelAlias,omitempty"`
-	Kind        string `json:"kind,omitempty"`
+	// ModelShort is the model drawn with its entry's shared prefix left out, when
+	// that was asked for; empty draws the model as it is.
+	ModelShort string `json:"modelShort,omitempty"`
+	Kind       string `json:"kind,omitempty"`
 	// What this model produces, projected from the protocol table so a chooser
 	// filters on a declaration rather than on a kind's spelling.
 	Answers string `json:"answers,omitempty"`
@@ -400,13 +407,16 @@ func tariffBody(t pricing.Tariff) map[string]any {
 }
 
 // presetVendor is the declared vendor of the curated preset a provider came
-// from, read through the provenance the entry already records, and whether the
-// preset is a relay of other makers' models.
+// from or, for a hand-written entry, of the one serving its address, and whether
+// the preset is a relay of other makers' models.
 func presetVendor(p *config.ProviderEntry) (vendor string, relay bool) {
-	if p == nil || p.PresetID == "" {
+	if p == nil {
 		return "", false
 	}
 	if preset, ok := config.CuratedProviderPreset(p.PresetID); ok {
+		return preset.Vendor, preset.Relay
+	}
+	if preset, ok := config.CuratedProviderPresetForAddress(p.BaseURL); ok {
 		return preset.Vendor, preset.Relay
 	}
 	return "", false

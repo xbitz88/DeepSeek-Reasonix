@@ -211,10 +211,12 @@ func (c *Controller) newInteractiveGate() *permission.Gate {
 	// `--allowed-tools remember` write memory with no prompt. Strip them so the
 	// forced Ask rules below stay authoritative.
 	policy.SessionAllow = rulesWithoutFreshHumanApproval(policy.SessionAllow)
-	policy.Ask = append(policy.Ask,
-		permission.Rule{Tool: memoryRememberTool},
-		permission.Rule{Tool: memoryForgetTool},
-	)
+	if mode != ToolApprovalYolo {
+		policy.Ask = append(policy.Ask,
+			permission.Rule{Tool: memoryRememberTool},
+			permission.Rule{Tool: memoryForgetTool},
+		)
+	}
 	var approver permission.Approver = gateApprover{c}
 	if mode == ToolApprovalDontAsk {
 		approver = denyPermissionApprover{}
@@ -341,19 +343,18 @@ func (c *Controller) AnswerQuestionFrom(id string, answers []event.AskAnswer, vi
 	if err != nil {
 		return err
 	}
-	// No selections is the explicit "skip" path: it ends the turn rather than
-	// feeding a prose dismissal back to the model (#6869). An external
-	// party's form is refused to that party instead, and the turn goes on.
+	c.recordAskDecisionReceipt(id, pending, answers, "answered", via)
+	// No selections is the explicit "skip" path: the turn ends as finished (#6869).
+	// An external party's form is refused to that party. The skip is marked before
+	// the answer is delivered, or a turn that gets it first reads as interrupted.
 	if !askAnswersHaveSelection(answers) && pending.origin == nil {
 		c.mu.Lock()
 		activeTurn := c.gate.cancel != nil
 		c.mu.Unlock()
 		if activeTurn {
 			c.cancelTurn(causeAskSkipped)
-			return nil
 		}
 	}
-	c.recordAskDecisionReceipt(id, pending, answers, "answered", via)
 	pending.reply <- answers // buffered, never blocks
 	return nil
 }
@@ -617,11 +618,11 @@ func (c *Controller) requestApprovalDecision(ctx context.Context, req approvalRe
 	c.approval.promptEmitMu.Lock()
 	var id string
 	var reply chan approvalReply
+	kind := ""
+	if req.tool == planApprovalTool {
+		kind = "plan"
+	}
 	if req.fresh || req.requireHuman || req.tool == planApprovalTool {
-		kind := ""
-		if req.tool == planApprovalTool {
-			kind = "plan"
-		}
 		id, reply = c.approval.registerDecisionKindWithInput(req.tool, req.subject, req.reason, req.args, req.fresh, req.requireHuman, kind, nil)
 	} else {
 		id, reply = c.approval.registerWithInput(req.tool, req.subject, req.reason, req.args)
@@ -631,7 +632,7 @@ func (c *Controller) requestApprovalDecision(ctx context.Context, req approvalRe
 	c.sink.Emit(c.approvalRequestEvent(event.Approval{
 		ID: id, Tool: req.tool, Subject: req.subject, Reason: req.reason, ReasonCode: ExplicitApprovalCode(req.tool, req.subject),
 		RawInput: append(json.RawMessage(nil), req.args...), Fresh: req.fresh,
-		AllowsSession: session, AllowsPersist: c.offersPersist(req.tool, persist),
+		AllowsSession: session, AllowsPersist: c.offersPersist(req.tool, persist), Kind: kind,
 	}))
 	c.approval.promptEmitMu.Unlock()
 	// The agent now needs the user's attention; a Notification hook can ping an

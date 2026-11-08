@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { t } from "../i18n";
 import { CopyButton } from "./CopyButton";
 import { StudioIcon } from "./StudioIcon";
+import { splitLines } from "./codelines";
 
 // Past this many lines a settled block opens folded to FOLDED_LINES, so one long
 // file in a reply does not push the answer around it off the screen.
@@ -41,30 +42,36 @@ export function CodeBlock({ lang, source, live, children }: { lang: string; sour
   const foldable = !live && lines > FOLD_OVER;
   const [open, setOpen] = useState(false);
   const folded = foldable && !open;
+  const rows = splitLines(children);
+  while (rows.length > lines && rows[rows.length - 1].length === 0) rows.pop();
   return (
     <div className="code-wrap" data-lang={lang || undefined} data-folded={folded ? "" : undefined}>
       <div className="code-hd">
-        <span className="code-lang">{lang || t("代码")}</span>
-        <span className="code-lines">{t("{n} 行", { n: lines })}</span>
+        <span className="code-lang">{lang || t("chat.code")}</span>
+        <span className="code-lines">{t("chat.n_lines", { n: lines })}</span>
         <span className="code-acts">
           {!live && (
-            <button type="button" className="code-act" data-action="code.download" title={t("下载为文件")} aria-label={t("下载为文件")} onClick={() => download(source, lang)}>
+            <button type="button" className="code-act" data-action="code.download" title={t("chat.download_as_file")} aria-label={t("chat.download_as_file")} onClick={() => download(source, lang)}>
               <StudioIcon name="download" />
             </button>
           )}
-          {!live && <CopyButton text={source} iconOnly className="code-act" label={t("复制这段代码")} />}
+          {!live && <CopyButton text={source} iconOnly className="code-act" label={t("chat.copy_this_code")} />}
         </span>
       </div>
-      <div className="code-body">
-        <div className="code-gutter" aria-hidden="true">
-          {Array.from({ length: lines }, (_, i) => <span key={i}>{i + 1}</span>)}
-        </div>
-        <pre className="term">{children}</pre>
+      <div className="code-body" style={{ "--ln-w": `${String(lines).length + 1}ch` } as CSSProperties}>
+        <pre className="term">
+          {rows.map((row, i) => (
+            <span className="code-ln" key={i}>
+              <i className="code-no" aria-hidden="true">{i + 1}</i>
+              <span className="code-tx">{row.length ? row : "\n"}</span>
+            </span>
+          ))}
+        </pre>
       </div>
       {foldable && (
         <button type="button" className="code-more" data-action="code.fold" aria-expanded={open} onClick={() => setOpen(!open)}>
           <StudioIcon name="chevron" />
-          <span>{open ? t("收起") : t("展开全部 {n} 行", { n: lines })}</span>
+          <span>{open ? t("common.collapse") : t("chat.show_all_n_lines", { n: lines })}</span>
         </button>
       )}
     </div>

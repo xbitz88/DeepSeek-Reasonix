@@ -255,7 +255,7 @@ func (c *Controller) Branch(name string) (string, error) {
 		c.sessionPath = newPath
 		c.guardianPath = guardian.PathFor(newPath)
 		c.mu.Unlock()
-		c.bindExecutorProjection(newPath, false)
+		c.bindExecutorProjection(newPath, true)
 		c.ResetPlannerSession()
 		c.setActiveJobSession(newPath)
 		c.rebindCheckpoints(newPath)
@@ -363,10 +363,6 @@ func (c *Controller) resume(s *sessionstore.Session, path string, announceColdRe
 	migPath, migData, migrated, _ := c.goals.restoreFromState(path)
 	if migrated {
 		c.persistGoalState(migPath, migData, true)
-	}
-	if c.executor != nil {
-		c.executor.RestoreDeliveryCheckpoint(c.goals.deliveryState())
-		c.observeVerificationContractDrift()
 	}
 	c.restoreTerminalGoalTodos(path)
 	c.loadGuardianSession()

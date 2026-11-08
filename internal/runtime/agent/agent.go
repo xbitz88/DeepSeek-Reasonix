@@ -91,7 +91,7 @@ type callContext struct {
 // not import this package (for example internal/tools/builtin) can still read it.
 func WithCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker, planMode bool) context.Context {
 	ctx = planmode.WithActive(ctx, planMode)
-	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker, planMode: planMode})
+	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: event.BindUsageScope(sink), asker: asker, planMode: planMode})
 }
 
 // WithToolCallContext stamps ctx as a host-initiated top-level tool call.
@@ -284,10 +284,6 @@ type Agent struct {
 	progressWatch     atomic.Pointer[ProgressWatch]
 	reasoningLanguage atomic.Value // string: auto|zh|en
 
-	// unwrittenResolve is the resolve watermark a failed state write still owes.
-	// It outlives the conversation, which is why it is not in sessionRuntime.
-	unwrittenResolve unwrittenResolve
-
 	// planRuntime is the plan lifecycle: which phase, under which authority
 	// epoch. Replaceable, so a controller can hand several agents the one
 	// lifecycle they share. Never a permission or sandbox boundary.
@@ -374,7 +370,6 @@ type Agent struct {
 
 	// Context management keeps the canonical transcript immutable and installs
 	// at most one provider-visible checkpoint each time compactRatio is crossed.
-	keepPolicy             KeepPolicy
 	strictAlternatingRoles bool // coalesce adjacent user turns on provider request copies
 	// activeTurnCreatedAt identifies the real/synthetic user message that began
 	// the currently running turn. Compaction may rewrite older history while a
@@ -382,15 +377,6 @@ type Agent struct {
 	// verbatim so cancellation/crash recovery can retain completed tool pairs.
 	activeTurnCreatedAt atomic.Int64
 }
-
-// KeepPolicy is a bitmask controlling which messages are preserved beyond the
-// recent tail during compaction.
-type KeepPolicy int
-
-const (
-	KeepErrors KeepPolicy = 1 << iota
-	KeepUserMarked
-)
 
 // SetPlanMode enters or leaves the plan-first workflow. Ordinary calls still
 // use Permissions/Sandbox; only explicit phase opt-outs are refused. The system
@@ -623,9 +609,9 @@ func (a *Agent) SetSink(sink event.Sink) {
 func (a *Agent) CompactRatio() float64 { return a.compactRatio }
 
 // CompactNow runs one requested projection compaction (canonical transcript
-// untouched). Asking waives the automatic threshold; it does not waive what the
-// fold has to be worth, so a context nothing was added to is declined rather
-// than summarized a second time. Only IgnoreEconomics waives that.
+// untouched). Asking waives the automatic threshold and how much was added since
+// the last checkpoint, but a context nothing was added to is still declined
+// rather than summarized a second time. Only IgnoreEconomics waives that.
 func (a *Agent) CompactNow(ctx context.Context, req CompactRequest) (CompactVerdict, error) {
 	prepared, err := a.window().contextManager().Prepare(ctx, ContextPreparePolicy{
 		Trigger:         CompactionTriggerManual,
@@ -643,9 +629,6 @@ func (a *Agent) CompactNow(ctx context.Context, req CompactRequest) (CompactVerd
 func New(prov provider.Provider, tools *tool.Registry, session *sessionstore.Session, opts Options, sink event.Sink) *Agent {
 	if opts.CompactRatio <= 0 {
 		opts.CompactRatio = defaultCompactRatio
-	}
-	if opts.RecentKeep <= 0 {
-		opts.RecentKeep = minRecentKeep
 	}
 	if nilutil.IsNil(sink) {
 		sink = event.Discard
@@ -713,7 +696,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *sessionstore.Ses
 			providerRetries:         opts.ProviderRetries,
 			contextWindow:           opts.ContextWindow,
 			compactRatio:            opts.CompactRatio,
-			recentKeep:              opts.RecentKeep,
 			budgets:                 opts.CompactionBudgets,
 			archiveDir:              opts.ArchiveDir,
 		},
@@ -735,7 +717,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *sessionstore.Ses
 		ablation:               opts.Ablation,
 		capabilityLedger:       opts.CapabilityLedger,
 		capabilityAudit:        opts.CapabilityAudit,
-		keepPolicy:             opts.KeepPolicy,
 		strictAlternatingRoles: opts.StrictAlternatingRoles,
 	}
 	a.sess.output.outputBudget = outputBudgetOf(prov)
@@ -804,15 +785,6 @@ func usageSourceOrDefault(source, fallback string) string {
 		return source
 	}
 	return fallback
-}
-
-// missingReasoningWarnStateFor returns nil when no state dir is configured, so
-// direct Agent construction keeps the historical once-per-session notice scope.
-func missingReasoningWarnStateFor(dir string) *missingReasoningWarnState {
-	if strings.TrimSpace(dir) == "" {
-		return nil
-	}
-	return newMissingReasoningWarnState(dir)
 }
 
 // reserveParentWrite holds write claims for the duration of a parent-agent
@@ -886,9 +858,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			a.svc.jobs.CommitEvidenceForSession(lease.Session, lease.JobID)
 		}
 	}()
-	if _, scoped := DeliveryExecutionScopeFromContext(ctx); scoped {
-		defer func() { a.updateDeliveryCheckpoint(runErr) }()
-	}
 	defer a.activeTurnCreatedAt.Store(0)
 
 	// agent.before_start: an extension may abort the run before the user turn
@@ -899,9 +868,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 
 	_, state := a.beginRunTurn(ctx, input)
 	ctx = a.bindRootTokenBudget(ctx, state)
-	if state.snapshot != nil {
-		defer state.snapshot.cancel()
-	}
 	state.runMaxSteps = runMaxSteps
 	state.runMaxStepsKey = runMaxStepsKey
 	state.runLimitHostOwned = runLimitHostOwned
@@ -909,13 +875,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	err := a.runToolLoop(ctx, state)
 	report(state.answeredMs, err)
 	return err
-}
-
-func boolInt(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
 }
 
 // DeliveryCheckpoint returns the compact Goal-scoped delivery state. It is safe
@@ -933,56 +892,6 @@ func (a *Agent) RestoreDeliveryCheckpoint(checkpoint evidence.DeliveryCheckpoint
 	}
 	a.task.checkpoint = checkpoint
 	a.task.scopeID = checkpoint.ScopeID
-}
-
-// PrepareDeliveryRecovery preserves the exhausted turn's evidence for exactly
-// one explicit continuation. It returns false when there is no matching
-// readiness failure, so normal follow-up turns cannot inherit stale mutations.
-func (a *Agent) PrepareDeliveryRecovery() bool {
-	if !a.deliveryProfile {
-		return false
-	}
-	return a.prepareEvidenceContinuation()
-}
-
-func (a *Agent) updateDeliveryCheckpoint(runErr error) {
-	if !a.turn.deliveryScopeActive || a.task.scopeID == "" || a.task.ledger == nil {
-		return
-	}
-	cp := a.task.checkpoint
-	if cp.ScopeID != a.task.scopeID {
-		cp = evidence.DeliveryCheckpoint{ScopeID: a.task.scopeID}
-	}
-	cp.CriteriaEstablished = cp.CriteriaEstablished || a.turn.deliveryCriteriaEstablished || a.task.ledger.HasSuccessfulTodoWrite()
-	cp.WorkObserved = cp.WorkObserved || a.task.ledger.HasSuccessfulWorkReceipt()
-	persistentOnlyReady := a.task.ledger.HasSuccessfulToolReceipt("remember") &&
-		!a.task.ledger.HasSuccessfulMutationOtherThan("remember")
-	if _, ok := a.task.ledger.LatestSuccessfulMutationIndex(); ok && !persistentOnlyReady {
-		cp.MutationObserved = true
-		cp.PendingMutation = true
-	}
-	if persistentOnlyReady {
-		cp.MutationObserved = true
-	}
-	if runErr == nil && cp.PendingMutation && a.deliveryMutationCheckpointReady() {
-		cp.PendingMutation = false
-	}
-	a.carryProof(&cp)
-	a.task.checkpoint = cp
-}
-
-func (a *Agent) deliveryMutationCheckpointReady() bool {
-	if a.task.ledger == nil || !a.turn.deliveryCriteriaEstablished {
-		return false
-	}
-	mutation, ok := a.task.ledger.LatestSuccessfulMutationIndex()
-	if !ok {
-		mutation = -1
-	}
-	return a.task.ledger.HasSuccessfulCompleteStepAfter(mutation) &&
-		a.task.ledger.HasSuccessfulDeliverySignoffAfter(mutation) &&
-		a.task.ledger.HasSuccessfulReviewAfter(mutation) &&
-		a.reviewGateFailure() == ""
 }
 
 func (a *Agent) setTodoState(todos []evidence.TodoItem) {
@@ -1099,11 +1008,11 @@ func (a *Agent) shouldNudgeExecutorHandoff() bool {
 }
 
 // planContractExpectsAction reports whether carrying out the plan requires
-// touching the workspace: a step that names files or a verification command
-// cannot be delivered as prose alone.
+// touching the workspace: a step that names files cannot be
+// delivered as prose alone.
 func planContractExpectsAction(plan plancontract.Plan) bool {
 	for _, step := range plan.Steps {
-		if len(step.VerifiedFiles) > 0 || len(step.CandidateFiles) > 0 || len(step.Verification) > 0 {
+		if len(step.VerifiedFiles) > 0 || len(step.CandidateFiles) > 0 {
 			return true
 		}
 	}
@@ -1121,28 +1030,6 @@ Use your available tools now to carry out the task. If carrying out the planner'
 
 func hasVisibleFinalAnswer(text string) bool {
 	return strings.TrimSpace(text) != ""
-}
-
-// reasoningOnlyFinishHonoured reports whether the model finished with a stop
-// signal but placed its answer in the reasoning stream rather than the content
-// block. DeepSeek thinking mode does this occasionally: it streams a long
-// reasoning_content, then returns finish_reason="stop" with an empty content.
-// The model has signalled completion, so the host accepts the turn instead of
-// retrying and forcing another expensive thinking round.
-//
-// The accept is scoped to DeepSeek thinking mode (ToolCallReasoningPolicy):
-// for other providers a reasoning-only turn keeps the empty-final retry
-// safety net — local <think>-tag models often recover a visible answer on
-// the second attempt, and a gateway that mislabels truncation as "stop"
-// must not have a degenerate turn committed as the final answer.
-func reasoningOnlyFinishHonoured(p provider.Provider, u *provider.Usage, reasoning string) bool {
-	if !provider.RequiresToolCallReasoning(p) {
-		return false
-	}
-	if u == nil || u.FinishReason != "stop" {
-		return false
-	}
-	return strings.TrimSpace(reasoning) != ""
 }
 
 func emptyFinalNotice() string {
@@ -1512,7 +1399,7 @@ func toEventShellExecution(in *tool.ShellExecution, durationMs int64) *event.She
 		SupportsAndAnd: in.SupportsAndAnd,
 		State:          in.State,
 		FailurePhase:   in.FailurePhase,
-		OutputTail:     in.OutputTail, Subject: in.Subject,
+		OutputTail:     in.OutputTail, Subject: in.Subject, JobID: in.JobID,
 		MutationRisk: in.MutationRisk,
 		Verification: in.Verification,
 		DurationMs:   in.DurationMs,

@@ -5,10 +5,10 @@ import type { WorkspaceInfo, WorktreeSelection, WorktreeSources } from "../port/
 import type { AgentPort, WorkspaceGit } from "../port/port";
 import { useWorkspaceBranches } from "./useWorkspaceBranches";
 import { StudioIcon } from "./StudioIcon";
+import { workspaceDirectoryDescription } from "./workspaceDirectory";
 import { WorkspacePath, WorkspaceBranchName, compactWorkspaceValue, workspaceName } from "./WorkspacePath";
 import { listenAction } from "./listen";
 import { beside, pinToViewport, useFollow, zoom } from "./place";
-import "../styles/worktree.css";
 
 interface Props {
   port: AgentPort;
@@ -16,6 +16,7 @@ interface Props {
   onSwitched?: (git: WorkspaceGit) => void;
   onError: (error: unknown) => void;
   sources: WorktreeSources;
+  workspace: WorkspaceInfo | null;
   canCreate: boolean;
   selection: WorktreeSelection | null;
   branch: string;
@@ -25,11 +26,10 @@ interface Props {
   refresh: () => Promise<WorktreeSources>;
 }
 
-export function WorktreeChip({ sources, canCreate, selection, branch, busy, changeCount, onSelect, refresh, port, onChanged, onSwitched, onError }: Props) {
+export function WorktreeChip({ sources, workspace, canCreate, selection, branch, busy, changeCount, onSelect, refresh, port, onChanged, onSwitched, onError }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sourceError, setSourceError] = useState(false);
-  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -43,16 +43,14 @@ export function WorktreeChip({ sources, canCreate, selection, branch, busy, chan
   const isolated = workspace?.current === sources.sourceRoot && !!workspace.isolated;
   const chosen = sources.sources.find((source) => source.ref === selection?.ref);
   const label = chosen?.name ?? selection?.ref ?? branch;
+  const creationDescription = t("composer.create_an_isolated_worktree_when");
+  const directoryDescription = selection ? creationDescription : workspaceDirectoryDescription(isolated);
   const scope = useRef({ port, root: sources.sourceRoot });
   useEffect(() => {
-    let live = true;
     if (scope.current.port !== port || scope.current.root !== sources.sourceRoot) {
       scope.current = { port, root: sources.sourceRoot };
       returnFocus.current = false; setOpen(false); setQuery("");
     }
-    setWorkspace(null);
-    void port.workspaces().then((value) => { if (live) setWorkspace(value); }).catch(() => {});
-    return () => { live = false; };
   }, [port, sources.sourceRoot]);
   const put = useCallback(() => {
     if (!trigger.current || !panel.current) return;
@@ -96,30 +94,34 @@ export function WorktreeChip({ sources, canCreate, selection, branch, busy, chan
   const failed = selection ? sourceError : reading === "failed";
   const loading = !selection && (reading === "idle" || reading === "loading") && locals.length === 0;
   return <div className="studio-branch-pop">
-    <button ref={trigger} type="button" className="mode plain studio-branch worktree-trigger" data-on={selection || isolated ? "" : undefined} data-pending={moving !== null ? "" : undefined} data-action="workspace.configure" aria-label={t("配置工作目录")} title={selection ? label : branch} aria-haspopup="dialog" aria-expanded={open} disabled={busy || moving !== null} onClick={show}>
-      <StudioIcon name="branch"/><span className="lb">{moving ? t("正在切换到 {branch}…", { branch: moving }) : selection || isolated ? t("独立 worktree · {branch}", { branch: compactWorkspaceValue(label) }) : t("当前目录 · {branch}", { branch: compactWorkspaceValue(branch) })}</span>{changeCount > 0 && <small>{t("{n} 个变更", { n: changeCount })}</small>}<StudioIcon name="down"/>
+    <button ref={trigger} type="button" className="mode plain studio-branch worktree-trigger" data-on={selection || isolated ? "" : undefined} data-pending={moving !== null ? "" : undefined} data-action="workspace.configure" aria-label={t("composer.configure_workspace")} title={`${directoryDescription}\n${selection ? label : branch}\n${sources.sourceRoot}`} aria-haspopup="dialog" aria-expanded={open} disabled={busy || moving !== null} onClick={show}>
+      <StudioIcon name="branch"/><span className="lb">{moving ? t("composer.switching_to_branch", { branch: moving }) : selection || isolated ? t("composer.isolated_worktree_branch", { branch: compactWorkspaceValue(label) }) : compactWorkspaceValue(branch)}</span>{changeCount > 0 && <small>{t("composer.n_changes", { n: changeCount })}</small>}<StudioIcon name="down"/>
     </button>
     {open && createPortal(<div ref={panel} className="workspace-palette" role="dialog" aria-labelledby={title}>
-      <div className="workspace-palette-heading"><span id={title}>{t("配置工作目录")}</span><button data-action="workspace.configure" className="workspace-palette-close" aria-label={t("关闭工作目录配置")} onClick={close}><StudioIcon name="close"/></button></div>
-      <div className="workspace-palette-identity"><StudioIcon name="folder"/><strong title={sources.sourceRoot}>{workspaceName(sources.sourceRoot)}</strong><span>{t(selection ? "新建 worktree" : isolated ? "独立 worktree" : "当前目录")}</span></div>
-      {canCreate && <div className="worktree-modes"><button data-action="workspace.worktree-toggle" aria-pressed={!selection} disabled={busy || moving !== null} onClick={() => { onSelect(null); setQuery(""); }}><StudioIcon name="folder"/>{t("使用当前目录")}</button><button data-action="workspace.worktree-toggle" aria-pressed={!!selection} disabled={busy || moving !== null || !sources.available} onClick={selectWorktree}><StudioIcon name="branch"/>{t("新建 worktree")}</button></div>}
-      {selection && <div className="workspace-palette-base"><span>{t("起始分支")}</span><strong title={label}>{compactWorkspaceValue(label)}</strong><small>{t("任务分支自动创建")}</small></div>}
-      <div className="workspace-palette-search"><StudioIcon name="search"/><input data-action-change="workspace.source-search" data-action-keydown="workspace.source-navigate" ref={search} type="search" aria-label={t("搜索分支")} placeholder={t(selection ? "搜索起始分支…" : "搜索本地分支…")} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+      <div className="workspace-palette-heading"><span id={title}>{t("composer.configure_workspace")}</span><button data-action="workspace.configure" className="workspace-palette-close" aria-label={t("composer.close_workspace_configuration")} onClick={close}><StudioIcon name="close"/></button></div>
+      <div className="workspace-palette-identity"><StudioIcon name="folder"/><strong title={sources.sourceRoot}>{workspaceName(sources.sourceRoot)}</strong>{(selection || isolated) && <span title={directoryDescription}>{t("common.isolated_worktree")}</span>}</div>
+      {canCreate && <div className="worktree-modes">
+        <button data-action="workspace.worktree-toggle" title={workspaceDirectoryDescription(false)} aria-pressed={!selection} disabled={busy || moving !== null} onClick={() => { onSelect(null); setQuery(""); }}>{t("composer.current_folder")}</button>
+        <button data-action="workspace.worktree-toggle" title={creationDescription} aria-pressed={!!selection} disabled={busy || moving !== null || !sources.available} onClick={selectWorktree}>{t("common.isolated_worktree")}</button>
+      </div>}
+      {canCreate && <p className="workspace-palette-desc">{selection ? creationDescription : workspaceDirectoryDescription(false)}</p>}
+      {selection && <div className="workspace-palette-label">{t("common.source_branch")}</div>}
+      <div className="workspace-palette-search"><StudioIcon name="search"/><input data-action-change="workspace.source-search" data-action-keydown="workspace.source-navigate" ref={search} type="search" aria-label={t("composer.search_branches")} placeholder={t(selection ? "composer.search_source_branches" : "composer.search_local_branches")} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
         if (event.key === "ArrowDown") { event.preventDefault(); panel.current?.querySelector<HTMLElement>('[role="option"]:not(:disabled)')?.focus(); }
       }}/></div>
-      {failed ? <div className="workspace-palette-empty" role="alert"><p>{t("分支读取失败")}</p><button data-action="workspace.source-open" className="btn" onClick={reload}>{t("重新读取")}</button></div> : loading ? <div className="workspace-palette-empty" role="status">{t("正在读取分支…")}</div> : <div className="worktree-sources" role="listbox" aria-label={t(selection ? "起始分支" : "本地分支")} data-action="workspace.source-navigate" onKeyDown={(event) => {
+      {failed ? <div className="workspace-palette-empty" role="alert"><p>{t("composer.could_not_read_branches")}</p><button data-action="workspace.source-open" className="btn" onClick={reload}>{t("common.read_again")}</button></div> : loading ? <div className="workspace-palette-empty" role="status">{t("composer.reading_branches")}</div> : <div className="worktree-sources" role="listbox" aria-label={t(selection ? "common.source_branch" : "composer.local_branches")} data-action="workspace.source-navigate" onKeyDown={(event) => {
         const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
         const at = items.indexOf(document.activeElement as HTMLButtonElement);
         const next = event.key === "ArrowDown" ? at + 1 : event.key === "ArrowUp" ? at - 1 : at;
         if (next !== at) { event.preventDefault(); items[(next + items.length) % items.length]?.focus(); }
         if (event.key === "Home" || event.key === "End") { event.preventDefault(); (event.key === "Home" ? items[0] : items.at(-1))?.focus(); }
       }}>
-        {[false, true].map((remote) => <div key={String(remote)}>{remote && shown.some((source) => source.remote) && <small className="workspace-palette-group">{t("远程分支")}</small>}{shown.filter((source) => source.remote === remote).map((source) => <button data-action={selection ? "workspace.source-select" : "git.branch"} key={source.ref} type="button" role="option" aria-label={source.name} aria-selected={selected(source)} disabled={!selection && (!!source.worktree || moving !== null)} title={source.worktree ? `${source.name}\n${source.worktree}` : source.name} onClick={() => {
+        {[false, true].map((remote) => <div key={String(remote)}>{selection && shown.some((source) => source.remote) && shown.some((source) => source.remote === remote) && <small className="workspace-palette-group">{t(remote ? "composer.remote_branches" : "composer.local_branches")}</small>}{shown.filter((source) => source.remote === remote).map((source) => <button data-action={selection ? "workspace.source-select" : "git.branch"} key={source.ref} type="button" role="option" aria-label={source.name} aria-selected={selected(source)} disabled={!selection && (!!source.worktree || moving !== null)} title={source.worktree ? `${source.name}\n${source.worktree}` : source.name} onClick={() => {
           if (selection) onSelect({ ref: source.ref, sourceRoot: sources.sourceRoot }); else switchTo(source.name);
-        }}><StudioIcon name="branch"/><span className="workspace-palette-branch"><WorkspaceBranchName value={source.name}/></span>{source.worktree ? <small>{t("其他 worktree 占用")}</small> : selected(source) && <small>{t(selection ? "起点" : "当前")}</small>}<StudioIcon name={selected(source) ? "check" : "chevron"}/></button>)}</div>)}
-        {shown.length === 0 && <p className="workspace-palette-empty">{t("没有匹配的分支")}</p>}
+        }}><StudioIcon name="branch"/><span className="workspace-palette-branch"><WorkspaceBranchName value={source.name}/></span>{source.worktree ? <small>{t("composer.used_by_another_worktree")}</small> : selected(source) && <small>{t(selection ? "composer.source" : "common.now")}</small>}</button>)}</div>)}
+        {shown.length === 0 && <p className="workspace-palette-empty">{t("composer.no_matching_branches")}</p>}
       </div>}
-      <p className="workspace-palette-note">{t(selection ? "从已提交版本创建，任务和附件将在就绪后发送" : "选择后立即切换，同目录会话也会受影响")}</p>
+      <p className="workspace-palette-note">{selection ? `${t("composer.a_task_branch_will_be")} · ${t("composer.create_from_the_committed_version")}` : t("composer.switches_immediately_other_sessions_in")}</p>
       <div className="workspace-palette-footer"><WorkspacePath path={sources.sourceRoot} onResize={put}/></div>
     </div>, document.body)}
   </div>;

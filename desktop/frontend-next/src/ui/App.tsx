@@ -84,6 +84,7 @@ const Settings = lazy(async () => {
 
 const NO_REPORT: PaneReport = {
   status: null,
+  workspace: null,
   title: "",
   steer: 0,
   run: "idle",
@@ -129,6 +130,7 @@ export function App({ hub }: { hub: HubPort }) {
   const [dockLimit, setDockLimit] = useState(() => dockMax(document.body.clientWidth));
   const [report, setReport] = useState<PaneReport>(NO_REPORT);
   const [filesRequests, setFilesRequests] = useState<Record<string, number>>({});
+  const [terminalRequests, setTerminalRequests] = useState<Record<string, number>>({});
   const [viewRequests, setViewRequests] = useState<Record<string, { to: PaneView; n: number }>>({});
   const [sessionRefs, referenceSession] = usePaneSessionRefs(active, (id) => panePorts.has(id));
   const [error, setError] = useState("");
@@ -169,7 +171,6 @@ export function App({ hub }: { hub: HubPort }) {
   // on every usage round, and handing the sidebar that would rebuild a tree of
   // a few hundred sessions each frame — which is what its memo is there for.
   const liveIds = useCallback((ids: string[]) => ids.filter((id) => runsRef.current[id]?.live), []);
-
   const { listedIds, noteReport } = useLiveGrace(runsRef, runs);
 
   const onReport = useCallback((id: string, next: PaneReport) => {
@@ -193,7 +194,6 @@ export function App({ hub }: { hub: HubPort }) {
   useEffect(() => {
     setReport(reportsRef.current[active] ?? NO_REPORT);
   }, [active]);
-
   const paging = useMemo<TreePaging>(
     () => ({
       more: (root) => treeWindow.grow(root, readTree),
@@ -350,12 +350,18 @@ export function App({ hub }: { hub: HubPort }) {
 
   const openFiles = useCallback(() => {
     if (!panePorts.has(active)) {
-      setError(t("请先打开一个会话，再查看它的文件。"));
+      setError(t("app.open_a_session_first_to"));
       return;
     }
     hidePrefs();
     if (roomGaveUp("scene")) setRail(false);
     setFilesRequests((requests) => ({ ...requests, [active]: (requests[active] ?? 0) + 1 }));
+  }, [active, panePorts, hidePrefs]);
+
+  const openTerminal = useCallback(() => {
+    if (!panePorts.has(active)) return;
+    hidePrefs();
+    setTerminalRequests((requests) => ({ ...requests, [active]: (requests[active] ?? 0) + 1 }));
   }, [active, panePorts, hidePrefs]);
 
   const showView = useCallback((to: PaneView) => {
@@ -409,15 +415,16 @@ export function App({ hub }: { hub: HubPort }) {
   const zoomKeys = useZoomKeys(look, onLook);
   const shortcuts: Shortcut[] = useMemo(
     () => [
-      { chord: "\\", fields: true, action: "rail.toggle", run: () => setRail((v) => !v) },
+      { chord: "b", fields: true, action: "chrome.rail", run: () => setRail((v) => !v) },
       { chord: ",", fields: true, action: "chrome.settings", run: showPrefs },
       { chord: "f", action: "transcript.find", run: find.open },
       { chord: "1", fields: true, action: "pane.view", run: () => showView("flow") },
       { chord: "2", fields: true, action: "pane.view", run: () => showView("analysis") },
       { chord: "3", fields: true, action: "pane.view", run: () => showView("browser") },
+      { chord: "`", fields: true, action: "workbench.launch-terminal", run: openTerminal },
       ...zoomKeys,
     ],
-    [showPrefs, find.open, showView, zoomKeys],
+    [showPrefs, find.open, showView, openTerminal, zoomKeys],
   );
   const closeBrowser = useCallback(() => setBrowser(false), []);
   const stopTurn = useCallback(() => activePort?.cancel(), [activePort]);
@@ -451,7 +458,7 @@ export function App({ hub }: { hub: HubPort }) {
           if (held && (session.title || session.turns)) return session.title || session.name;
         }
       }
-      return at === 0 ? t("新会话") : t("新会话 {n}", { n: at + 1 });
+      return at === 0 ? t("common.new_session") : t("app.new_session_n", { n: at + 1 });
     },
     [tree, viewed.remote],
   );
@@ -522,7 +529,13 @@ export function App({ hub }: { hub: HubPort }) {
 
   const branchSession = useBranchSession({ panePorts, runtimes, runsRef, openPane });
 
-  const first = useFirstRun({ port: activePort, setup, welcomed, setSetup, setWelcomed, reloadPanes });
+  const first = useFirstRun({
+    port: activePort, setup, welcomed, setSetup, setWelcomed, reloadPanes,
+    project: {
+      pick: async () => (await hub.pickFolder()) || null,
+      add: async (dir) => { const workspace = await hub.addWorkspace(dir); await reloadTree(); await openPane({ root: workspace.root }); },
+    },
+  });
 
   if (setup === undefined || welcomed === undefined) return <div className="app" data-run="idle" />;
   if (first.gate) return first.gate;
@@ -561,6 +574,7 @@ export function App({ hub }: { hub: HubPort }) {
         host={runtimes.find((rt) => rt.id === active)?.host}
         port={activePort}
         status={report.status}
+        workspace={report.workspace}
         title={tabs.find((tab) => tab.rt.id === active)?.title ?? report.title}
         steer={report.steer}
         account={account}
@@ -625,9 +639,8 @@ export function App({ hub }: { hub: HubPort }) {
           onArchive={archiveSession}
           onRename={renameSession}
           onCollapse={() => setRail(false)}
-          account={account}
-          accountUnread={accountUnread}
           wallet={report.wallet}
+          approval={report.status?.toolApprovalMode}
           onSettings={showPrefs}
           onFiles={openFiles}
           onView={showView}
@@ -643,7 +656,7 @@ export function App({ hub }: { hub: HubPort }) {
             edge="l"
             span={RAIL}
             width={railW}
-            label={t("调整工作区栏宽度")}
+            label={t("app.resize_the_workspace_rail")}
             open={rail}
             onWidth={onRailW}
             onOpen={setRail}
@@ -671,7 +684,7 @@ export function App({ hub }: { hub: HubPort }) {
                   rt={rt}
                   port={port}
                   hub={hub}
-                  title={tabs.find((tab) => tab.rt.id === rt.id)?.title ?? t("新会话")}
+                  title={tabs.find((tab) => tab.rt.id === rt.id)?.title ?? t("common.new_session")}
                   active={rt.id === active}
                   sideHost={null}
                   side={false}
@@ -687,6 +700,7 @@ export function App({ hub }: { hub: HubPort }) {
                   findPulse={find.pulse}
                   findTogglePulse={find.togglePulse}
                   filesPulse={filesRequests[rt.id] ?? 0}
+                  terminalPulse={terminalRequests[rt.id] ?? 0}
                   viewRequest={viewRequests[rt.id]}
                   sessionRef={sessionRefs[rt.id]}
                   alert={rt.id === active ? bar : undefined}
@@ -711,17 +725,17 @@ export function App({ hub }: { hub: HubPort }) {
                 <span className="mk" aria-hidden="true">
                   ⌘
                 </span>
-                <p className="t">{t("没有打开的会话")}</p>
+                <p className="t">{t("app.no_session_open")}</p>
                 {!treeRead ? null : tree.length === 0 ? (
                   <>
-                    <p className="h">{t("没有文件夹也能开始：会话会在应用自己的目录里打开")}</p>
-                    <button data-action="session.new" onClick={() => void startConversation().catch(fail)}>{t("新建会话")}</button>
-                    <button data-action="workspace.add" disabled={adder.busy} onClick={() => adder.add()}>{t("添加文件夹")}</button>
+                    <p className="h">{t("app.you_can_start_without_a")}</p>
+                    <button data-action="session.new" onClick={() => void startConversation().catch(fail)}>{t("common.start_a_new_session")}</button>
+                    <button data-action="workspace.add" disabled={adder.busy} onClick={() => adder.add()}>{t("app.add_folder")}</button>
                   </>
                 ) : (
                   <>
-                    <p className="h">{t("从左栏选择，或在当前文件夹新建")}</p>
-                    <button data-action="session.new" onClick={() => void startConversation().catch(fail)}>{t("新建会话")}</button>
+                    <p className="h">{t("app.pick_one_on_the_left")}</p>
+                    <button data-action="session.new" onClick={() => void startConversation().catch(fail)}>{t("common.start_a_new_session")}</button>
                   </>
                 )}
               </div>
@@ -742,7 +756,7 @@ export function App({ hub }: { hub: HubPort }) {
       <ToastStack onFeedback={() => setFeedback("send")} port={machinePort} idle={!running} look={look} onLook={onLook} />
 
       {feedback && activePort && (
-        <Feedback port={machinePort} tab={feedback} onClose={() => setFeedback(null)} onError={setError} onUnread={setFeedbackUnread} />
+        <Feedback port={machinePort} tab={feedback} onClose={() => setFeedback(null)} onError={setError} onUnread={setFeedbackUnread} unread={feedbackUnread} />
       )}
 
       {settings && activePort && (

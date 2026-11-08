@@ -14,9 +14,9 @@ const PLACEHOLDER = `https://github.com/acme/review-kit
 ~/projects/my-plugin`;
 
 const RISK_TITLE: Record<string, string> = {
-  high: "以下项目会在本机运行程序",
-  medium: "以下项目会改变可用能力",
-  low: "以下项目仅添加文件",
+  high: "ext.these_run_programs_on_this",
+  medium: "ext.these_change_what_is_available",
+  low: "ext.these_only_add_files",
 };
 
 export const ORDER = ["high", "medium", "low"];
@@ -32,6 +32,8 @@ interface Props {
   // A source someone already chose, such as a plugin named in a restored backup.
   source?: string;
   onApplying?: (applying: boolean) => void;
+  // Opened to import a folder: the picker comes up at once.
+  pickFirst?: boolean;
 }
 
 export function AddPlugin(props: Props) {
@@ -40,7 +42,7 @@ export function AddPlugin(props: Props) {
   return <PluginInput key={connection.generation} {...props} />;
 }
 
-function PluginInput({ port, onClose, onInstalled, updating, source, onApplying }: Props) {
+function PluginInput({ port, onClose, onInstalled, updating, source, onApplying, pickFirst }: Props) {
   const sourceLabel = useId();
   const [text, setText] = useState(updating?.source ?? source ?? "");
   const [plan, setPlan] = useState<PluginPlan | null>(null);
@@ -70,7 +72,7 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
       // "Nothing installable here" is the plan's own answer, and its reason is
       // more useful than anything this component could invent.
       if (!p.actions?.length) {
-        setError(p.error || p.next || t("该来源中没有可安装的内容"));
+        setError(p.error || p.next || t("ext.there_is_nothing_installable_at"));
         setPlan(null);
         return;
       }
@@ -113,6 +115,12 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
       setBusy(false);
     }
   };
+  const picked = useRef(false);
+  useEffect(() => {
+    if (!pickFirst || picked.current) return;
+    picked.current = true;
+    void pick();
+  });
 
   // An update has nothing to type: its source was recorded at install. Going
   // straight to the plan is what makes the button say "update" and not "fill
@@ -139,11 +147,11 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
               setPlan(null);
               if (updating) void look();
             }}>
-              {t(updating ? "重试" : "返回")}
+              {t(updating ? "common.retry" : "common.back")}
             </button>
           )}
           <button className="act" data-action="extensions.finish" ref={done.ok ? apply : undefined} onClick={onClose}>
-            {t("完成")}
+            {t("common.done")}
           </button>
         </div>
       </div>
@@ -166,9 +174,9 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
             <span className="t">
               {version(plan.actions) && updating.version
                 ? `${updating.name} ${updating.version} → ${version(plan.actions)}`
-                : t("重装 {name}", { name: updating.name })}
+                : t("ext.reinstall_name", { name: updating.name })}
             </span>
-            <span className="why">{gained.length ? t("本版本新增：{list}", { list: gained.join(language() === "zh" ? "、" : " · ") }) : t("没有新增的可执行内容。")}</span>
+            <span className="why">{gained.length ? t("ext.this_version_adds_list", { list: gained.join(language() === "zh" ? "、" : " · ") }) : t("ext.nothing_new_that_runs")}</span>
           </div>
         )}
         {groups.map((g) => (
@@ -186,14 +194,14 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
           </div>
         ))}
         <div className="acts">
-          <span className="note">{t(updating ? "覆盖已安装的版本" : "安装到「我的」，所有项目均可使用")}</span>
+          <span className="note">{t(updating ? "ext.replace_the_installed_copy" : "ext.install_to_mine_available_in")}</span>
           <button
             className="act"
             data-action={updating ? "extensions.cancel" : "extensions.back"}
             disabled={busy}
             onClick={() => (updating ? onClose() : setPlan(null))}
           >
-            {t(updating ? "取消" : "返回")}
+            {t(updating ? "common.cancel" : "common.back")}
           </button>
           <button
             className="act"
@@ -203,7 +211,7 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
             disabled={busy}
             onClick={() => void install()}
           >
-            {t(busy ? (updating ? "更新中…" : "安装中…") : updating ? "更新" : "安装")}
+            {t(busy ? (updating ? "ext.updating" : "ext.installing") : updating ? "ext.update" : "ext.install")}
           </button>
         </div>
         {error && <div className="why" role="alert">{error}</div>}
@@ -217,13 +225,13 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
     return (
       <div className="addpkg" data-stage="reading" aria-busy={busy}>
         <div className="find" data-lvl={error ? "err" : undefined}>
-          <span className="t">{error ? t("无法读取 {name} 的来源", { name: updating.name }) : t("正在读取 {name} 的来源…", { name: updating.name })}</span>
+          <span className="t">{error ? t("ext.cannot_read_name_s_source", { name: updating.name }) : t("ext.reading_name_s_source", { name: updating.name })}</span>
           <span className="why">{error || updating.source}</span>
         </div>
         <div className="acts">
-          {error && <button className="act" data-action="extensions.inspect" data-primary ref={apply} disabled={busy} onClick={() => void look()}>{t("重试")}</button>}
+          {error && <button className="act" data-action="extensions.inspect" data-primary ref={apply} disabled={busy} onClick={() => void look()}>{t("common.retry")}</button>}
           <button className="act" data-action="extensions.cancel" ref={error ? undefined : apply} onClick={onClose}>
-            {t(error ? "关掉" : "取消")}
+            {t(error ? "ext.close" : "common.cancel")}
           </button>
         </div>
       </div>
@@ -236,6 +244,7 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
         className="paste"
         aria-labelledby={sourceLabel}
         data-action-keydown="extensions.inspect"
+        data-action-change="extensions.inspect"
         rows={3}
         autoFocus
         value={text}
@@ -250,12 +259,12 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
         }}
       />
       <div className="acts">
-        <span className="note" id={sourceLabel}>{t("仓库地址，或将文件夹拖入此处")}</span>
+        <span className="note" id={sourceLabel}>{t("ext.a_repository_address_or_drop")}</span>
         <button className="act" data-action="extensions.pick-folder" disabled={busy} onClick={() => void pick()}>
-          {t("选文件夹")}
+          {t("common.choose_a_folder")}
         </button>
         <button className="act" data-action="extensions.cancel" onClick={onClose}>
-          {t("取消")}
+          {t("common.cancel")}
         </button>
         <button
           className="act"
@@ -264,7 +273,7 @@ function PluginInput({ port, onClose, onInstalled, updating, source, onApplying 
           disabled={!text.trim() || busy}
           onClick={() => void look()}
         >
-          {t(busy ? "读取中…" : "查看内容")}
+          {t(busy ? "ext.reading" : "ext.see_what_it_is")}
         </button>
       </div>
       {error && <div className="why" role="alert">{error}</div>}
@@ -276,9 +285,9 @@ export function PreviewCut({ shown, hidden }: { shown?: boolean; hidden?: number
   if (!shown && !hidden) return null;
   return (
     <div className="why" data-testid="preview-cut">
-      {hidden ? t("另有 {n} 项未显示；高风险项都已列出。", { n: hidden }) : null}
+      {hidden ? t("ext.n_more_steps_are_not", { n: hidden }) : null}
       {hidden && shown ? " " : null}
-      {shown ? t("部分文字过长或含不可见字符，预览没有显示全部。") : null}
+      {shown ? t("ext.some_text_is_too_long") : null}
     </div>
   );
 }
@@ -299,9 +308,9 @@ export function Candidate({ a }: { a: PluginAction }) {
       </div>
       {a.kind === "plugin" && a.commit && (
         <div className="risk">
-          <span className="lb">{t("已解析提交")}</span>
+          <span className="lb">{t("ext.resolved_commit")}</span>
           <span className="dt">{a.commit}</span>
-          <CopyButton text={a.commit} label={t("复制提交号")} iconOnly showFeedback />
+          <CopyButton text={a.commit} label={t("ext.copy_commit")} iconOnly showFeedback />
         </div>
       )}
       {runs.map((r) => (
@@ -314,32 +323,32 @@ export function Candidate({ a }: { a: PluginAction }) {
       {a.mod && <ModPreviewBlock mod={a.mod} />}
       {adds.length > 0 && (
         <div className="risk">
-          <span className="lb">{t("将添加")}</span>
+          <span className="lb">{t("ext.will_be_added")}</span>
           <span className="dt">{adds.join(" · ")}</span>
         </div>
       )}
       {Object.keys(a.env ?? {}).map((k) => (
         <div className="risk" data-kind="secret" key={k}>
-          <span className="lb">{t("需填写")}</span>
+          <span className="lb">{t("ext.needs_filling_in")}</span>
           <span className="dt">{k}</span>
         </div>
       ))}
       {a.skippedCapabilities?.map((s) => (
         <div className="risk" key={s.capability + s.reason}>
-          <span className="lb">{t("不可用")}</span>
+          <span className="lb">{t("ext.unusable")}</span>
           <span className="dt">{s.capability}</span>
           <span className="why">{s.reason}</span>
         </div>
       ))}
       {a.previewTruncated && (
         <div className="risk">
-          <span className="lb">{t("已截断")}</span>
-          <span className="dt">{t("部分文字")}</span>
+          <span className="lb">{t("ext.shortened")}</span>
+          <span className="dt">{t("ext.some_text")}</span>
         </div>
       )}
       {a.riskReasons?.length ? (
         <details className="reasons">
-          <summary>{t("内核给出的判定（{n}）", { n: a.riskReasons.length })}</summary>
+          <summary>{t("ext.the_kernels_assessment_n", { n: a.riskReasons.length })}</summary>
           {a.riskReasons.map((r) => (
             <p key={r}>{r}</p>
           ))}
@@ -356,25 +365,25 @@ function executes(a: PluginAction): { label: string; detail: string; why?: strin
   const out: { label: string; detail: string; why?: string }[] = [];
   if (a.runtime) {
     out.push({
-      label: "常驻进程",
+      label: "ext.long_running_process",
       detail: [a.runtime.command, ...(a.runtime.args ?? [])].join(" "),
-      why: "运行于 Reasonix 内部，可读取整个会话、绕过权限并直接操作本机",
+      why: "ext.runs_inside_reasonix_can_read",
     });
   }
   if (a.runtime?.tools?.length) {
-    out.push({ label: "新增工具", detail: a.runtime.tools.join(language() === "zh" ? "、" : ", "), why: "agent 可以调用，每次调用照常经过权限确认" });
+    out.push({ label: "ext.new_tools", detail: a.runtime.tools.join(language() === "zh" ? "、" : ", "), why: "ext.the_agent_can_call_them" });
   }
   if (a.hookCount) {
-    out.push({ label: "自动化钩子", detail: language() === "zh" ? t("{n} 条", { n: a.hookCount }) : plural(a.hookCount, "1 条钩子", "{n} 条钩子"), why: "在会话生命周期内自动执行" });
+    out.push({ label: "ext.automatic_hooks", detail: language() === "zh" ? t("common.n_2", { n: a.hookCount }) : plural(a.hookCount, "ext.n_1_hook", "ext.n_hooks"), why: "ext.run_automatically_during_the_session" });
   }
   if (a.toolCount) {
-    out.push({ label: "外部服务", detail: plural(a.toolCount, "1 个 MCP 服务", "{n} 个 MCP 服务"), why: "为 agent 提供的能力与内置工具等同" });
+    out.push({ label: "ext.external_services", detail: plural(a.toolCount, "ext.n_1_mcp_service", "ext.n_mcp_services"), why: "ext.provides_capabilities_equivalent_to_the" });
   }
   if (a.kind === "mcp" && a.command) {
-    out.push({ label: "将启动", detail: [a.command, ...(a.args ?? [])].join(" ") });
+    out.push({ label: "ext.will_start", detail: [a.command, ...(a.args ?? [])].join(" ") });
   }
   if (a.kind === "mcp" && a.url) {
-    out.push({ label: "将连接至", detail: a.url });
+    out.push({ label: "ext.will_connect_to", detail: a.url });
   }
   return out;
 }
@@ -389,16 +398,16 @@ function version(actions?: PluginAction[]): string {
 function newlyGained(current: PluginPackage, actions: PluginAction[]): string[] {
   const plugin = actions.find((a) => a.kind === "plugin");
   const out: string[] = [];
-  if (plugin?.runtime && !current.runtime) out.push(t("一个常驻进程"));
+  if (plugin?.runtime && !current.runtime) out.push(t("ext.a_long_running_process"));
   const tools = (plugin?.runtime?.tools ?? []).filter((name) => !current.runtime?.tools?.includes(name));
-  if (tools.length > 0) out.push(t("工具 {names}", { names: tools.join(language() === "zh" ? "、" : ", ") }));
+  if (tools.length > 0) out.push(t("ext.tools_names", { names: tools.join(language() === "zh" ? "、" : ", ") }));
   const hooks = (plugin?.hookCount ?? 0) - (current.hooks?.length ?? 0);
-  if (hooks > 0) out.push(plural(hooks, "一条钩子", "{n} 条钩子"));
+  if (hooks > 0) out.push(plural(hooks, "ext.a_hook", "ext.n_hooks"));
   const servers = (plugin?.toolCount ?? 0) - (current.mcpServers?.length ?? 0);
-  if (servers > 0) out.push(plural(servers, "一个外部服务", "{n} 个外部服务"));
+  if (servers > 0) out.push(plural(servers, "ext.an_external_service", "ext.n_external_services"));
   // A separate MCP action installs a server of its own, outside the package.
   const standalone = actions.filter((a) => a.kind === "mcp").length;
-  if (standalone > 0) out.push(plural(standalone, "一个独立的 MCP 服务", "{n} 个独立的 MCP 服务"));
+  if (standalone > 0) out.push(plural(standalone, "ext.a_standalone_mcp_service", "ext.n_standalone_mcp_services"));
   return out;
 }
 
@@ -407,11 +416,11 @@ function contributes(a: PluginAction): string[] {
   const add = (n: number | undefined, one: string, many: string) => {
     if (n) parts.push(plural(n, one, many));
   };
-  add(a.skillCount, "1 个技能", "{n} 个技能");
-  add(a.commandCount, "1 个命令", "{n} 个命令");
-  add(a.agentCount, "1 个子代理", "{n} 个子代理");
-  add(a.promptCount, "1 个提示词", "{n} 个提示词");
-  add(a.themeCount, "1 套配色", "{n} 套配色");
+  add(a.skillCount, "ext.n_1_skill", "ext.n_skills");
+  add(a.commandCount, "ext.n_1_command", "ext.n_commands");
+  add(a.agentCount, "ext.n_1_subagent", "subagent.group.count");
+  add(a.promptCount, "ext.n_1_prompt", "ext.n_prompts");
+  add(a.themeCount, "ext.n_1_palette", "ext.n_palettes");
   return parts;
 }
 
@@ -424,22 +433,22 @@ export function Outcome({ plan }: { plan: PluginPlan }) {
   return <>
     <div className="outcome" data-state={state}>
       <i className="pip" />
-      <span className="nm">{plan.actions?.[0]?.name || t("安装")}</span>
+      <span className="nm">{plan.actions?.[0]?.name || t("ext.install")}</span>
       <span className="dt">
-        {state === "ready" && t("装好了，下一轮就能用")}
-        {state === "action_required" && t("装好了，但运行时未重载：{reason}。请用「重载运行时」重试。", { reason: plan.reloadError! })}
-        {state === "issue" && (plan.error || (failed.length ? t("有项目未安装成功，原因见下方。") : plan.next || t("没装上")))}
+        {state === "ready" && t("ext.installed_the_next_turn_can")}
+        {state === "action_required" && t("ext.installed_but_the_runtime_did", { reason: plan.reloadError! })}
+        {state === "issue" && (plan.error || (failed.length ? t("ext.not_all_items_were_installed") : plan.next || t("ext.not_installed")))}
       </span>
     </div>
     {failed.map((action, i) => (
       <div className="why" role="alert" key={`${action.kind}:${action.name}:${i}`}>
-        {action.name || action.kind}: {action.error || action.next || t("没装上")}
+        {action.name || action.kind}: {action.error || action.next || t("ext.not_installed")}
         {action.error && action.next && <div>{action.next}</div>}
       </div>
     ))}
     {state === "issue" && plan.reloadError && (
       <div className="why" role="status">
-        {t("运行时未重载：{reason}。请用「重载运行时」重试。", { reason: plan.reloadError })}
+        {t("ext.the_runtime_did_not_reload", { reason: plan.reloadError })}
       </div>
     )}
   </>;

@@ -66,7 +66,8 @@ type toolCallPlan struct {
 	pathsBefore pathSnapshot
 	// scanBefore is the whole workspace before the same call, which is what
 	// lets an unclassifiable one be settled as having changed nothing.
-	scanBefore workspaceScan
+	scanBefore            workspaceScan
+	claimObservationEpoch uint64
 
 	// mutationPath is set when a Previewer described a concrete workspace path
 	// for AfterMutation fingerprint capture (success or failure).
@@ -611,21 +612,13 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	if blocked, early := a.preToolUse(ctx, plan); early {
 		return blocked, true
 	}
+	plan.claimObservationEpoch = plan.leasePreparation.ObservationEpoch()
 	if !plan.readOnly {
 		a.observeBeforeMutation(ctx, plan)
 		plan.mutationObserved = plan.mutationPath != "" || len(plan.declaredPaths) > 0
 	}
 	plan.cctx = a.toolCallContext(ctx, plan)
 	if plan.mutates {
-		// Before the write, not after: a criterion's old bytes exist nowhere else
-		// once this runs, and no later evidence can reconstruct what it said.
-		if err := a.captureCriteriaBefore(ctx, plan); err != nil {
-			return toolOutcome{
-				output:  "blocked: the host could not keep what this call may overwrite — " + err.Error(),
-				blocked: true,
-				errMsg:  "blocked: baseline criteria could not be held",
-			}, true
-		}
 		plan.pathsBefore = snapshotPaths(a.task.ledger, a.writeWorkspaceRoot, append(evidence.ToolCallPaths(plan.evidenceArgs), plan.declaredPaths...))
 		plan.scanBefore = a.scanBeforeUnprovenCall(ctx, plan)
 	}
@@ -706,9 +699,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	err = usecap.WithContractHint(err, runTool, runArgs)
 	origin := plan.provenanceOf(runTool, runArgs)
 	tool.NoteProvenance(ctx, origin)
-	owedBefore := a.obligations()
 	a.recordToolReceipts(ctx, plan, result, execution, err)
-	result = a.withObligationNotice(result, owedBefore, execution, readOnly)
 	// Track skill/capability outcomes for Delivery gates.
 	a.noteCapabilityInvocation(plan.canonicalName, json.RawMessage(call.ExecutionArguments()), runTool, err)
 	a.notifyToolHooks(ctx, permName, permArgs, result, err)
@@ -738,7 +729,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		out.keepFull(rawErr)
 		return out
 	}
-	a.observeTouchedPaths(runTool, runArgs)
+	a.observeTouchedPaths(runTool, runArgs, nil)
 	result = silentSuccessDetail(evidenceName, evidenceArgs, result)
 	body, bound, truncMsg := a.boundToolOutput(result, call.Name, call.ID, call.ExecutionArguments(), false)
 	out := toolOutcome{

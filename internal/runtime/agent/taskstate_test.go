@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"testing"
 
+	"reasonix/internal/contract/pricing"
 	"reasonix/internal/safety/evidence"
 )
 
@@ -26,7 +27,7 @@ func TestTaskRuntimeRestartCarriesScopeAndResetsAccounting(t *testing.T) {
 		checkpoint: evidence.DeliveryCheckpoint{ScopeID: "scope-1"},
 		ledger:     ledger,
 		outcome:    evidence.NewOutcomeTracker(),
-		budget:     runBudget{rounds: 4, requests: 9, cost: 1.5, limit: TaskBudget{}},
+		budget:     runBudget{rounds: 4, requests: 9, cost: runCost{amounts: map[string]pricing.Amount{"CNY": pricing.NewAmountFromFloat(1.5)}, currency: "CNY"}, limit: TaskBudget{}},
 		witness:    map[string][]string{"tally.go": {"total += x"}},
 		origins:    &originLedger{},
 	}
@@ -43,7 +44,7 @@ func TestTaskRuntimeRestartCarriesScopeAndResetsAccounting(t *testing.T) {
 	if after.ledger != ledger {
 		t.Error("ledger pointer replaced; tool contexts hold it for the length of a call")
 	}
-	if after.budget.rounds != 0 || after.budget.requests != 0 || after.budget.cost != 0 {
+	if after.budget.rounds != 0 || after.budget.requests != 0 || after.budget.cost.amount() != 0 {
 		t.Errorf("budget = %+v, want a fresh bill for the new task", after.budget)
 	}
 	if after.origins == nil || after.origins == before.origins {
@@ -79,7 +80,6 @@ var taskRestarted = map[string]bool{
 	"contract":       true,
 	"contractRecord": true,
 	// The explanation answers for an obligation of the ledger a new task replaces.
-	"explained": true,
 }
 
 // restartLedger is one assignment, so an unlisted field resets by default —

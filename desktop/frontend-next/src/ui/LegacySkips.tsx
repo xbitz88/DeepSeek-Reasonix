@@ -3,28 +3,28 @@ import type { LegacySkip, LegacySkipReason } from "../port/hub";
 import { CopyButton } from "./CopyButton";
 
 const REASON: Record<LegacySkipReason, string> = {
-  too_large: "体积超过读取上限",
-  unreadable_format: "不是本版本能读取的会话格式",
-  schema_unsupported: "来自本版本尚不支持的存储版本",
-  permission: "没有读取权限",
-  corrupt: "文件已损坏",
-  copy_failed: "复制到新位置时失败",
-  no_project: "没有记录它属于哪个项目，所以没有导入",
+  too_large: "ext.larger_than_the_size_limit",
+  unreadable_format: "ext.not_a_session_format_this",
+  schema_unsupported: "ext.written_by_a_storage_version",
+  permission: "ext.no_permission_to_read_it",
+  corrupt: "ext.the_file_is_damaged",
+  copy_failed: "ext.copying_it_to_the_new",
+  no_project: "ext.it_records_no_project_it",
 };
 
 export function LegacySkips({ skipped }: { skipped: LegacySkip[] }) {
   if (skipped.length === 0) return null;
   return (
     <details className="legacy-skips">
-      <summary>{t("有 {n} 个会话没有导入", { n: skipped.length })}</summary>
-      <span className="hint">{t("这些文件仍在原位置，没有被移动或删除。可复制路径自行处理，或修复后重新导入。")}</span>
+      <summary>{t("ext.n_sessions_were_not_imported", { n: skipped.length })}</summary>
+      <span className="hint">{t("ext.these_files_are_still_where")}</span>
       {skipped.map((skip) => (
         <div className="item" key={skip.path}>
           <div className="l">
             <b>{skip.name}</b>
             <span className="hint">{t(REASON[skip.reason] ?? REASON.copy_failed)}</span>
             <span className="p">{skip.path}</span>
-            <CopyButton text={skip.path} label={t("复制路径")} ariaLabel={t("复制路径：{name}", { name: skip.name })} />
+            <CopyButton text={skip.path} label={t("common.copy_path")} ariaLabel={t("ext.copy_path_name", { name: skip.name })} />
           </div>
         </div>
       ))}

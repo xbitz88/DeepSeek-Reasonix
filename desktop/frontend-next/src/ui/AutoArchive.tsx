@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import type { AgentPort } from "../port/port";
 import type { AutoArchiveSettings } from "../port/boundary";
-import { Group } from "./Group";
+import { SettingRow } from "./SettingRow";
 import { Switch } from "./Switch";
 
 const LIMIT = 3650;
@@ -40,52 +40,28 @@ export function AutoArchive({ port }: { port: AgentPort }) {
   const commit = () => {
     if (!state) return;
     const n = Number(days);
-    if (!Number.isInteger(n) || n < 1 || n > LIMIT) return setError(t("请输入 1 到 {n} 之间的整数。", { n: LIMIT }));
+    if (!Number.isInteger(n) || n < 1 || n > LIMIT) return setError(t("common.enter_a_whole_number_from_2", { n: LIMIT }));
     if (n !== state.days) void save({ enabled: state.enabled, days: n });
   };
 
-  const body = !state ? (
-    <div className="empty">{t("无法读取自动归档设置。")}</div>
-  ) : (
-    <div className="box">
-      <div className="lrow">
-        <span className="tx">
-          <span className="lb">{t("自动归档长时间未活动的对话")}</span>
-          <span className="ds">{t("默认关闭。开启后，超过下面天数没有活动的对话会在后台被归档。")}</span>
-        </span>
-        <Switch
-          data-action="auto-archive.enabled"
-          on={state.enabled}
-          busy={busy}
-          label={t("自动归档长时间未活动的对话")}
-          onClick={() => void save({ enabled: !state.enabled, days: state.days })}
-        />
-      </div>
-      <div className="lrow threshold-row">
-        <span className="tx">
-          <span className="lb">{t("闲置天数")}</span>
-          <span className="ds">{t("距上次活动超过这个天数才会归档。默认 {n} 天。", { n: state.defaultDays })}</span>
-        </span>
-        <div className="threshold-control">
-          <span className="unit-field">
-            <input type="text" inputMode="numeric" aria-label={t("闲置天数")} data-action-keydown="auto-archive.days" data-action-change="auto-archive.days"
+  if (!state) return <div className="empty">{t("data.could_not_read_the_auto")}</div>;
+  return (
+    <>
+      <SettingRow id="auto-archive" title={t("data.auto_archive_inactive_conversations")} desc={t("settings.days_before_archiving")}
+        more={t("data.archiving_only_moves_a_conversation")}>
+        <span className="unit-field">
+            <input type="text" inputMode="numeric" aria-label={t("data.idle_days")} data-action-keydown="auto-archive.days" data-action-change="auto-archive.days"
               value={days} disabled={busy}
               onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))}
               onBlur={commit}
               onKeyDown={blurOnEnter} />
-            <i>{t("天")}</i>
+            <i>{t("data.days")}</i>
           </span>
-        </div>
-      </div>
+        <Switch data-action="auto-archive.enabled" on={state.enabled} busy={busy} label={t("data.archive_conversations_left_idle")}
+          onClick={() => void save({ enabled: !state.enabled, days: state.days })} />
+      </SettingRow>
       {error && <div className="why">{error}</div>}
-    </div>
-  );
-
-  return (
-    <Group id="auto-archive" title={t("自动归档不活跃的对话")}
-      hint={t("归档只是把对话移出常用列表，内容不动，随时可在“已归档”里恢复。置顶的、正在运行的、等待你回答或批准的对话不会被归档。只处理已打开会话窗格的文件夹；导入的旧会话按原有的最后活动时间计算，开启后可能一次归档较多。")}>
-      {body}
-    </Group>
+    </>
   );
 }
 

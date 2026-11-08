@@ -26,7 +26,7 @@ export function usePromptRefine(port: Pick<AgentPort, "refinePrompt">, text: str
     setState({ phase: "working", draft });
     port.refinePrompt(draft, ac.signal).then(
       (out) => !ac.signal.aborted && setState({ phase: "ready", draft, text: out }),
-      (e) => !ac.signal.aborted && setState({ phase: "failed", draft, error: reason(e) || t("优化失败，请重试") }),
+      (e) => !ac.signal.aborted && setState({ phase: "failed", draft, error: reason(e) || t("composer.refining_failed_try_again") }),
     );
   };
   const dismiss = () => {
@@ -62,7 +62,7 @@ export function usePromptRefine(port: Pick<AgentPort, "refinePrompt">, text: str
       type="button"
       className="mode plain studio-attach studio-refine"
       data-action="prompt.refine"
-      aria-label={t("优化提示词")}
+      aria-label={t("composer.refine_prompt")}
       aria-describedby={tipId}
       aria-busy={working}
       aria-disabled={!text.trim() || working}
@@ -70,9 +70,9 @@ export function usePromptRefine(port: Pick<AgentPort, "refinePrompt">, text: str
     >
       <StudioIcon name="spark" />
       <span className="studio-control-tip" id={tipId} role="tooltip">
-        <b>{t("优化提示词")}</b>
+        <b>{t("composer.refine_prompt")}</b>
         <span>
-          {t("用当前模型改写得更清楚，采用前不会替换原文")} <span style={{ whiteSpace: "nowrap" }}>· Ctrl+Shift+E</span>
+          {t("composer.rewrite_it_more_clearly_with")} <span style={{ whiteSpace: "nowrap" }}>· Ctrl+Shift+E</span>
         </span>
       </span>
     </button>
@@ -80,30 +80,43 @@ export function usePromptRefine(port: Pick<AgentPort, "refinePrompt">, text: str
 
   const card =
     state.phase === "idle" ? null : (
-      <section className="refine-card" data-phase={state.phase} aria-label={t("优化后的提示词")}>
+      <section className="refine-card" data-phase={state.phase} aria-label={t("composer.refined_prompt")}>
         <header>
           <StudioIcon name="spark" />
-          <b>{t("优化后的提示词")}</b>
-          {state.phase !== "working" && state.draft !== text && <small>{t("输入框已修改，采用会覆盖当前内容")}</small>}
+          <b>{t("composer.refined_prompt")}</b>
+          <small>
+            {state.phase !== "working" && state.draft !== text
+              ? t("composer.the_box_has_changed_adopting")
+              : t("composer.refine_note")}
+          </small>
         </header>
-        {state.phase === "working" && <p className="refine-wait" role="status">{t("正在优化…")}</p>}
+        {state.phase === "working" && (
+          <p className="refine-wait" role="status">
+            <StudioIcon name="spark" />
+            {t("composer.refining")}
+            <button type="button" className="btn sm" data-weak="" data-action="prompt.discard" onClick={dismiss}>
+              {t("common.cancel")}
+            </button>
+          </p>
+        )}
         {state.phase === "failed" && <p className="refine-error" role="alert">{state.error}</p>}
         {state.phase === "ready" && <div className="refine-text">{state.text}</div>}
-        <footer>
-          {state.phase === "ready" && (
-            <button type="button" className="btn sm" data-primary data-action="prompt.adopt" onClick={take}>
-              {t("采用")}
+        {state.phase !== "working" && (
+          <footer>
+            <s className="refine-original">{t("composer.refine_original", { text: state.draft })}</s>
+            <button type="button" className="btn sm" data-weak="" data-action="prompt.discard" onClick={dismiss}>
+              {t("composer.discard")}
             </button>
-          )}
-          {state.phase !== "working" && (
-            <button type="button" className="btn sm" data-action="prompt.refine" onClick={() => run(state.draft)}>
-              {state.phase === "failed" ? t("重试") : t("再来一次")}
+            <button type="button" className="btn" data-action="prompt.refine" onClick={() => run(state.draft)}>
+              {state.phase === "failed" ? t("common.retry") : t("composer.try_again")}
             </button>
-          )}
-          <button type="button" className="btn sm" data-weak="" data-action="prompt.discard" onClick={dismiss}>
-            {state.phase === "working" ? t("取消") : t("放弃")}
-          </button>
-        </footer>
+            {state.phase === "ready" && (
+              <button type="button" className="btn" data-primary data-action="prompt.adopt" onClick={take}>
+                {t("composer.adopt")}
+              </button>
+            )}
+          </footer>
+        )}
       </section>
     );
 

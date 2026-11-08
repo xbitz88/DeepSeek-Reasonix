@@ -1,5 +1,5 @@
-import type { Adjudications, BrowserToolsSettings, SubagentClaimsSettings, SubagentSteerSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, PermissionLists, PermissionRules, SandboxSettings, UpdateMode } from "./port";
-import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, DisplayCurrencyMode, DisplayCurrencySettings, ProgressWatchSettings, WorkspaceRoots, ReceiptSettings } from "./boundary";
+import type { Adjudications, BrowserToolsSettings, SubagentClaimsSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, PermissionLists, PermissionRules, SandboxSettings, UpdateMode } from "./port";
+import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, ChangedSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, DisplayCurrencyMode, DisplayCurrencySettings, ProgressWatchSettings, WorkspaceRoots } from "./boundary";
 import { mockMods } from "./mock_mods";
 import type { ScheduleBoard, ScheduleDraft, SchedulePreview, ScheduleResultView, ScheduleView } from "./schedule";
 import { HttpError } from "./http_error";
@@ -166,17 +166,6 @@ export class MockBoundary extends MockShell {
   async saveSubagentClaims(optimistic: boolean): Promise<SubagentClaimsSettings> {
     this.claims = { ...this.claims, optimistic };
     return { ...this.claims };
-  }
-
-  private steerLimits: SubagentSteerSettings = { maxBytes: 16384, perMinute: 30, defaultMaxBytes: 16384, defaultPerMinute: 30, path: "/Users/you/.reasonix/config.toml" };
-
-  async subagentSteerSettings(): Promise<SubagentSteerSettings> {
-    return { ...this.steerLimits };
-  }
-
-  async saveSubagentSteerSettings(maxBytes: number, perMinute: number): Promise<SubagentSteerSettings> {
-    this.steerLimits = { ...this.steerLimits, maxBytes, perMinute };
-    return { ...this.steerLimits };
   }
 
   private plans: PlanApprovalSettings = { auto: false, path: "/Users/you/.reasonix/config.toml" };
@@ -426,6 +415,10 @@ export class MockBoundary extends MockShell {
 
   private foldWork: FoldWorkSettings = { fold: false, path: "/Users/you/.reasonix/config.toml" };
 
+  async changedSettings(): Promise<ChangedSettings> {
+    return { keys: ["ui.fold_turn_work", "desktop.max_workspaces"], path: "/Users/you/.reasonix/config.toml" };
+  }
+
   async foldWorkSettings(): Promise<FoldWorkSettings> {
     return { ...this.foldWork };
   }
@@ -507,17 +500,6 @@ export class MockBoundary extends MockShell {
     return { ...this.sessionRef };
   }
 
-  private receipt: ReceiptSettings = { show: false, path: "/Users/you/.reasonix/config.toml" };
-
-  async receiptSettings(): Promise<ReceiptSettings> {
-    return { ...this.receipt };
-  }
-
-  async saveReceiptSettings(show: boolean): Promise<ReceiptSettings> {
-    this.receipt = { ...this.receipt, show };
-    return { ...this.receipt };
-  }
-
   async progressWatch(): Promise<ProgressWatchSettings> {
     return { ...this.watch };
   }
@@ -540,7 +522,7 @@ export class MockBoundary extends MockShell {
     return { backup, problem: null };
   }
 
-  private mode: UpdateMode = "manual";
+  private mode: UpdateMode = "notify";
   async updateMode(): Promise<UpdateMode> { return this.mode; }
   async setUpdateMode(mode: UpdateMode): Promise<UpdateMode> { this.mode = mode; return mode; }
 }

@@ -11,6 +11,9 @@ import (
 // file and none of them interact with the rest of the render.
 func renderDesktopSection(b *strings.Builder, c *Config) {
 	b.WriteString("[desktop]\n")
+	if c.Desktop.ProviderHealthChecks {
+		b.WriteString("provider_health_checks = true\n")
+	}
 	if lang := c.DesktopLanguage(); lang != "" {
 		fmt.Fprintf(b, "language = %q   # desktop UI language; empty/auto = browser/OS auto-detect\n", lang)
 	} else {
@@ -68,11 +71,9 @@ func renderDesktopSection(b *strings.Builder, c *Config) {
 		b.WriteString("# default_tool_approval_mode = \"ask\"   # desktop: unset opens in Auto only where the OS sandbox confines writes and the folder is trusted\n")
 	}
 	fmt.Fprintf(b, "check_updates = %v   # desktop: check for new versions on startup\n", c.DesktopCheckUpdates())
-	// Only written while held; an absent key follows the catalog. It has to
-	// outlive the install that set it, or the next launch updates the user
-	// back off the build they chose.
-	if mode := c.DesktopUpdateMode(); mode != UpdateModeManual {
-		fmt.Fprintf(b, "update_mode = %q   # desktop: manual (default) | notify tells you when a release is newer | download also leaves it downloaded and verified; never installs or restarts; user file only\n", mode)
+	// Only written once the user has chosen; an absent key reads as the default.
+	if mode := c.chosenUpdateMode(); mode != "" {
+		fmt.Fprintf(b, "update_mode = %q   # desktop: manual does nothing on its own | notify (default) tells you when a release is newer | download also leaves it downloaded and verified; never installs or restarts; user file only\n", mode)
 	}
 	if pinned := c.DesktopPinnedVersion(); pinned != "" {
 		fmt.Fprintf(b, "pinned_version = %q   # desktop: hold this machine on a release; empty follows the catalog\n", pinned)
@@ -88,7 +89,7 @@ func renderDesktopSection(b *strings.Builder, c *Config) {
 	renderDesktopReasoningDisplayMode(b, c)
 	fmt.Fprintf(b, "display_mode = %q   # desktop: standard|compact transcript display mode\n", c.DesktopDisplayMode())
 	if width := c.DesktopConversationWidth(); width != "standard" {
-		fmt.Fprintf(b, "conversation_width = %q   # desktop: standard|full|full-all (full-all widens the composer too); empty = standard\n", width)
+		fmt.Fprintf(b, "conversation_width = %q   # desktop: standard|full|full-all|custom; custom uses appearance.width_percent; empty = standard\n", width)
 	}
 	renderAppearanceSection(b, c.Desktop.Appearance)
 	b.WriteString("\n")
@@ -109,13 +110,16 @@ func renderDesktopSection(b *strings.Builder, c *Config) {
 // written.
 func renderAppearanceSection(b *strings.Builder, a AppearanceConfig) {
 	paper := strings.TrimSpace(a.Wallpaper.File)
-	if a.Zoom == 0 && a.ReadSize == 0 && a.TextSize == 0 && a.FontUI == "" && a.FontMono == "" && paper == "" {
+	if a.WidthPercent == 0 && a.Zoom == 0 && a.ReadSize == 0 && a.TextSize == 0 && a.FontUI == "" && a.FontMono == "" && paper == "" {
 		return
 	}
 	// The child table implies the parent, so an empty [desktop.appearance] is
 	// noise in a file people read.
-	if a.Zoom != 0 || a.ReadSize != 0 || a.TextSize != 0 || a.FontUI != "" || a.FontMono != "" {
+	if a.WidthPercent != 0 || a.Zoom != 0 || a.ReadSize != 0 || a.TextSize != 0 || a.FontUI != "" || a.FontMono != "" {
 		b.WriteString("\n[desktop.appearance]\n")
+	}
+	if a.WidthPercent != 0 {
+		fmt.Fprintf(b, "width_percent = %d   # custom conversation viewport percentage, %d..%d; retained for other width modes\n", EffectiveWidthPercent(a.WidthPercent), WidthPercentMin, WidthPercentMax)
 	}
 	if a.Zoom != 0 {
 		fmt.Fprintf(b, "zoom = %g   # whole-interface scale, %g..%g\n", a.Zoom, ZoomMin, ZoomMax)

@@ -397,17 +397,6 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.CompactRatio != orig.Agent.CompactRatio {
 		t.Errorf("compact_ratio = %v, want %v", got.Agent.CompactRatio, orig.Agent.CompactRatio)
 	}
-	// Deprecated multi-threshold fields must not reappear after render/load.
-	if got.Agent.SoftCompactRatio != 0 || got.Agent.ToolResultSnipRatio != 0 || got.Agent.CompactForceRatio != 0 {
-		t.Errorf("deprecated compact ratios survived round-trip: soft=%v snip=%v force=%v",
-			got.Agent.SoftCompactRatio, got.Agent.ToolResultSnipRatio, got.Agent.CompactForceRatio)
-	}
-	if strings.Join(got.Agent.Keep, ",") != strings.Join(orig.Agent.Keep, ",") {
-		t.Errorf("keep = %v, want %v", got.Agent.Keep, orig.Agent.Keep)
-	}
-	if got.Agent.RecentKeep != orig.Agent.RecentKeep {
-		t.Errorf("recent_keep = %d, want %d", got.Agent.RecentKeep, orig.Agent.RecentKeep)
-	}
 	if got.Agent.SystemPrompt != orig.Agent.SystemPrompt {
 		t.Errorf("system_prompt mismatch:\n got %q\nwant %q", got.Agent.SystemPrompt, orig.Agent.SystemPrompt)
 	}

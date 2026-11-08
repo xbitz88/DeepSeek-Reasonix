@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"reasonix/internal/state/sessionstore"
@@ -66,11 +65,6 @@ func hostAdvances(sink *recordSink) int {
 	return n
 }
 
-func readinessBlocked(err error) bool {
-	var readinessErr *FinalReadinessError
-	return errors.As(err, &readinessErr)
-}
-
 // sessionContains reports whether any message body holds sub — used to assert a
 // tool's own result text (a complete_step "signed off" or its rejection reason),
 // since Run returns nil whether or not a tool call was rejected mid-turn.
@@ -115,68 +109,6 @@ func TestE2ESerialPlanHostAdvancesAndAllowsFinalAnswer(t *testing.T) {
 	}
 	if n := hostAdvances(sink); n < 2 {
 		t.Fatalf("host advanced %d times, want >=2 (one per complete_step)", n)
-	}
-	if readinessBlocked(runErr) {
-		t.Fatal("a correctly signed-off plan should not trip the readiness gate")
-	}
-}
-
-// A command cited with a different string than it ran under (#2917: the model
-// drops the cd-prefix) is still accepted via segment matching, in-turn.
-func TestE2ECommandDriftAcceptedInTurn(t *testing.T) {
-	mp := testutil.NewMock("m",
-		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "b1", Name: "bash",
-			Arguments: `{"command":"cd /Users/x/repo && git merge upstream/main --ff-only"}`}}},
-		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c1", Name: "complete_step",
-			Arguments: `{"step":"sync","result":"synced","evidence":[{"kind":"verification","summary":"fast-forwarded","command":"git merge upstream/main --ff-only"}]}`}}},
-		testutil.Turn{Text: "synced"},
-	)
-	a := New(mp, evidenceRegistry(), sessionstore.NewSession("sys"), Options{}, event.Discard)
-	if err := a.Run(context.Background(), "sync the branch"); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !sessionContains(a, "signed off") {
-		t.Fatal("cd-prefixed command drift rejected a real verification")
-	}
-}
-
-// Cross-turn: a prior turn left an unfinished plan in the canonical state. A new
-// turn that does work and prematurely claims "all done" without re-asserting the
-// todos is blocked by the canonical fallback, then clears once both steps are
-// actually signed off (host-advanced) — the loop that #2917 could not close.
-func TestE2ECrossTurnCanonicalGateBlocksThenClears(t *testing.T) {
-	sess := sessionstore.NewSession("sys")
-	sess.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
-		ID: "t0", Name: "todo_write",
-		Arguments: `{"todos":[{"content":"alpha","status":"in_progress"},{"content":"beta","status":"pending"}]}`}}})
-	sess.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "t0", Name: "todo_write", Content: "Todos updated"})
-
-	// The premature "all done" ends the first Run immediately (no readiness
-	// retries). A follow-up turn signs the steps off with complete_step (the
-	// cited diff paths are proven from the session history) and clears the gate.
-	mp := testutil.NewMock("m",
-		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "w1", Name: "write_file", Arguments: `{"path":"alpha.go"}`}}},
-		testutil.Turn{Text: "all done"},
-		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c1", Name: "complete_step",
-			Arguments: `{"step":"alpha","result":"done","evidence":[{"kind":"diff","summary":"edited","paths":["alpha.go"]}]}`}}},
-		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c2", Name: "complete_step",
-			Arguments: `{"step":"beta","result":"done","evidence":[{"kind":"manual","summary":"verified by inspection"}]}`}}},
-		testutil.Turn{Text: "all done now"},
-	)
-	a := New(mp, evidenceRegistry(), sess, Options{CheckTargetAccess: allowTestFileAccess}, event.Discard)
-	a.SetSession(sess) // rebuilds canonical {alpha in_progress, beta pending}
-
-	firstErr := a.Run(context.Background(), "finish up")
-	if !readinessBlocked(firstErr) {
-		t.Fatalf("premature 'all done' error = %v, want FinalReadinessError from the cross-turn canonical gate", firstErr)
-	}
-	if err := a.Run(context.Background(), "finish up"); err != nil {
-		t.Fatalf("follow-up Run: %v", err)
-	}
-	for i, td := range a.sess.todoState {
-		if canonicalTodoStatus(td.Status) != "completed" {
-			t.Fatalf("canonical todo %d (%q) = %s after sign-off, want completed", i+1, td.Content, td.Status)
-		}
 	}
 }
 
@@ -236,27 +168,6 @@ func TestE2ECrossTurnDiffEvidenceViaSessionFallback(t *testing.T) {
 	}
 	if !sessionContains(a, "signed off") {
 		t.Fatal("turn 2 rejected a cross-turn diff citation the session proves")
-	}
-}
-
-// A diff citation for a file no turn ever wrote stays rejected — the session
-// fallback widens what counts as proof, it does not wave through fabrication.
-func TestE2EUnbackedDiffEvidenceStillRejected(t *testing.T) {
-	mp := testutil.NewMock("m",
-		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c1", Name: "complete_step",
-			Arguments: `{"step":"x","result":"y","evidence":[{"kind":"diff","summary":"claimed","paths":["never/written.go"]}]}`}}},
-		testutil.Turn{Text: "done"},
-	)
-	a := New(mp, evidenceRegistry(), sessionstore.NewSession("sys"), Options{}, event.Discard)
-
-	if err := a.Run(context.Background(), "sign off without doing the work"); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !sessionContains(a, "no matching successful writer") {
-		t.Fatal("a diff citation for a never-written file was accepted")
-	}
-	if sessionContains(a, "signed off") {
-		t.Fatal("an unbacked diff citation was signed off")
 	}
 }
 

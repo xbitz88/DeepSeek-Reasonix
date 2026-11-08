@@ -90,10 +90,10 @@ it("restores a remote archive without opening or closing a pane", async () => {
   expect(onOpen).not.toHaveBeenCalled();
 });
 
-it("identifies archived and legacy remote transcripts just like local rows", () => {
+it("identifies an archived remote transcript just like a local row, and draws no tag for a legacy one", () => {
   draw({ archived: true, legacy: true });
   expect(screen.getByText("已归档")).toBeTruthy();
-  expect(screen.getByTitle("由 Reasonix 1.x 创建：Studio 只读打开，继续对话会另存为新会话")).toBeTruthy();
+  expect(screen.queryByTitle("由 Reasonix 1.x 创建：Studio 只读打开，继续对话会另存为新会话")).toBeNull();
 });
 
 it("does not submit duplicate pin writes while the first is pending", async () => {
@@ -133,14 +133,17 @@ it("does not steal focus back after the reader moves to another control during a
 });
 
 it("marks a remote conversation read from its menu on that host, only while it is unread", async () => {
-  const { markSessionRead, onOpen } = draw({ unread: true });
+  const { markSessionRead, onOpen } = draw({ unread: true, lastActiveAt: 1_700_000_000_000 });
   const row = screen.getByRole("treeitem", { name: "Remote task" });
+  expect(row.querySelector("time")).toBeTruthy();
+  expect(within(row).getAllByRole("img", { name: "未读" })).toHaveLength(1);
   row.focus();
   await userEvent.keyboard("{Shift>}{F10}{/Shift}");
   await userEvent.click(screen.getByRole("menuitem", { name: "标为已读" }));
   await waitFor(() => expect(markSessionRead).toHaveBeenCalledWith("/same/task.jsonl", "gpu"));
   expect(onOpen).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.queryByRole("img", { name: "未读" })).toBeNull());
+  expect(row.querySelector("time")?.dateTime).toBe(new Date(1_700_000_000_000).toISOString());
   screen.getByRole("treeitem", { name: "Remote task" }).focus();
   await userEvent.keyboard("{Shift>}{F10}{/Shift}");
   expect(screen.queryByRole("menuitem", { name: "标为已读" })).toBeNull();

@@ -1,4 +1,4 @@
-import { inScope } from "./sessionScope";
+import { inScope, sessionRuntime, type SessionScope } from "./sessionScope";
 import { Fragment, type ReactNode, memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { hidesLegacySessions, onHidesLegacySessionsChange } from "../state/prefs";
 import { onSessionQuickActionsChange, showsSessionQuickActions } from "../state/sessionQuick";
@@ -6,12 +6,12 @@ import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import type { HubPort, RuntimeView, TreeSession, TreeWorkspace } from "../port/hub";
 import { workspaceContains } from "../port/hub";
+import { HttpError } from "../port/http_error";
 import type { Adder } from "./addws";
 import { pinToViewport } from "./place";
 import { useRailQuery } from "./railsearch";
 import { StudioIcon } from "./StudioIcon";
 import { TreeEmpty, TreeReading } from "./TreeReading";
-import { RowCount } from "./RowCount";
 import { ListingProgress } from "./ListingProgress";
 import { Cross } from "./glyphs";
 import { copyText } from "./CopyButton";
@@ -26,16 +26,16 @@ import { WorkspaceReveal } from "./WorkspaceReveal";
 import { SessionMenu } from "./SessionMenu";
 import { useSessionMove } from "./useSessionMove";
 import { useSessionMoveTo } from "./useSessionMoveTo";
-import { pinnedFirst } from "./pinorder";
+import { pinnedFirst } from "./pinorder"; import { Hit } from "./Hit"; import { WsMark } from "./WsMark"; import { ProjectMenuExtras } from "./ProjectMenuExtras";
 import { Confirm, removeHint, sessionDeleteHint } from "./WorkspaceConfirm";
-import { UnreadCount, UnreadDot } from "./UnreadMark";
+import { LeadDot, UnreadCount } from "./UnreadMark";
 import { PeerThreadMark } from "./peerthreads";
-import { NO_PAGING, atCap, sessionCount, answers, unloaded, type TreePaging, type TreeView } from "./treewindow";
+import { NO_PAGING, atCap, answers, unloaded, type TreePaging, type TreeView } from "./treewindow";
 import { SessionBatch, useSelectedRows } from "./SessionBatch";
 import { ProjectsHeader } from "./ProjectsHeader";
 import { useWorkspaceDrag } from "./useWorkspaceDrag";
-import { SessionAge } from "./SessionAge";
-import { SessionArchiveAction, SessionPinAction } from "./SessionRowActions";
+import { SessionTail } from "./SessionAge";
+import { SessionArchiveAction, SessionMoreAction, SessionPinAction } from "./SessionRowActions";
 import { useSessionMutation, type SessionMutation } from "./useSessionMutation";
 
 const parentOf = (root: string) => root.replace(/[/\\]+$/, "").split(/[/\\]/).slice(-2, -1)[0] ?? "";
@@ -57,6 +57,7 @@ interface Props {
   paging?: TreePaging;
   previewLimit?: number;
   onToggleAll?: () => void;
+  onRecent?: () => void;
   allFolded?: boolean;
   canFold?: boolean;
   // The session path being opened, or empty. The row shows it selected and busy
@@ -71,7 +72,7 @@ interface Props {
   // Which of these belong in the running list: the live ones, and the ones that finished within the chosen grace.
   listedIds?: (ids: string[]) => string[];
   runs: Record<string, { run: string; live: boolean }>;
-  scope?: "all" | "live" | "pinned" | "archived";
+  scope?: SessionScope;
   pinned?: Set<string>;
   onPin?: (path: string) => void;
   onPause?: (runtimeId: string) => void;
@@ -89,12 +90,18 @@ interface Props {
 // A conversation a pane holds before its first turn is written has only a file
 // name; calling it that would show a timestamp where every other row shows words.
 const rowLabel = (session: TreeSession) =>
-  session.title || (session.runtimeId && !session.turns ? t("新会话") : session.name);
+  session.title || (session.runtimeId && !session.turns ? t("common.new_session") : session.name);
 
-function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active, folded, reload, retry, paging = NO_PAGING, previewLimit = Infinity, onFold, onToggleAll, allFolded, canFold, opening = "", onOpen, onFocus, onClose, liveIds, listedIds = liveIds, runs, scope = "all", pinned = new Set(), onPin = () => {}, onPause = () => {}, onBranch, onArchive = async () => {}, onRename, onError, adder, children, hasOtherRows }: Props) {
+function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active, folded, reload, retry, paging = NO_PAGING, previewLimit = Infinity, onFold, onToggleAll, onRecent, allFolded, canFold, opening = "", onOpen, onFocus, onClose, liveIds, listedIds = liveIds, runs, scope = "all", pinned = new Set(), onPin = () => {}, onPause = () => {}, onBranch, onArchive = async () => {}, onRename, onError, adder, children, hasOtherRows }: Props) {
   const [busy, setBusy] = useState("");
   const [confirm, setConfirm] = useState("");
+  // The project whose folder an open just found gone: the question is asked about it, not about a removal chosen from the menu.
+  const [gone, setGone] = useState("");
+  const failIn = (ws: TreeWorkspace, e: unknown) => {
+    if (e instanceof HttpError && e.reason?.code === "workspace.folder_missing") { setGone(ws.root); setConfirm(ws.root); } else onError(e);
+  };
   const [selection, setSelection] = useState<Set<string> | null>(null);
+  const selectFrom = useRef("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // The row a Delete key asked about. The question replaces that row, so focus
   // goes back to it once the question is gone, or a keyboard is left nowhere.
@@ -114,7 +121,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
   const quickActions = useSyncExternalStore(onSessionQuickActionsChange, showsSessionQuickActions, showsSessionQuickActions);
   const [sessionMenu, setSessionMenu] = useState("");
   const order = useSessionMove(hub, reload, onError, !!needle);
-  const moveTo = useSessionMoveTo(hub, tree, reload, rowLabel);
+  const moveTo = useSessionMoveTo(hub, tree, reload, rowLabel, () => adder.add());
   const [sessionMenuAt, setSessionMenuAt] = useState({ x: 0, y: 0 });
   const sessionMenuBox = useRef<HTMLDivElement>(null);
   const sessionMenuPortal = useRef<HTMLDivElement>(null);
@@ -182,14 +189,15 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
     // The tree and runtime list arrive from separate reads. During a close or
     // restore the tree can briefly retain an id that no longer exists; focusing
     // that stale id changes no pane and makes the row look unclickable.
-    if (session.runtimeId && runtimes.some((rt) => rt.id === session.runtimeId)) {
-      onFocus(session.runtimeId);
+    const held = sessionRuntime(session, runtimes);
+    if (held) {
+      onFocus(held.id);
       return;
     }
     try {
       await onOpen({ root: session.workspaceRoot || ws.root, sessionPath: session.path });
     } catch (e) {
-      onError(e);
+      failIn(ws, e);
     }
   };
 
@@ -198,7 +206,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
     try {
       await onOpen({ root: ws.root });
     } catch (e) {
-      onError(e);
+      failIn(ws, e);
     } finally {
       setBusy("");
     }
@@ -221,10 +229,12 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
 
   const dropWorkspace = async (ws: TreeWorkspace) => {
     if (confirm !== ws.root) {
+      setGone("");
       setConfirm(ws.root);
       return;
     }
     setConfirm("");
+    setGone("");
     try {
       // Closed here for the same reason dropSession does it: the kernel will not
       // pull a folder out from under a pane that is writing, and leaving that to
@@ -328,7 +338,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
     .map((ws) => ({
       ...ws,
       sessions: pinnedFirst(ws.sessions.filter((session) =>
-        inScope(session, scope, !!needle, !!session.runtimeId && listedIds([session.runtimeId]).length > 0, pinned.has(session.path), hideLegacy)), pinned),
+        inScope(session, scope, !!needle, !!session.runtimeId && listedIds([session.runtimeId]).length > 0, pinned.has(session.path), hideLegacy, !!session.runtimeId && runs[session.runtimeId]?.run === "halt")), pinned),
     }))
     .filter((ws) => scope === "all" || ws.sessions.length > 0 || ws.countsComplete === false);
   // A fold is a resting-state preference: while a word is being typed it would
@@ -360,15 +370,12 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
     <>
       {moveTo.dialog}
       <SessionBatch hub={hub} selection={selection} selected={selected} displayed={displayed} onSelect={setSelection}
-        onExit={() => treeKeys.ref.current?.previousElementSibling?.querySelector<HTMLElement>('[data-action="machine.menu"]')?.focus()}
+        onExit={() => document.querySelector<HTMLElement>(`[data-action="workspace.menu"][data-target="${CSS.escape(selectFrom.current)}"]`)?.focus()}
         onBusy={(pending) => { setBusy(pending ? "batch" : ""); if (pending) { setSessionMenu(""); setEditing(""); setConfirm(""); } }}
         onClose={onClose} onArchive={onArchive} liveIds={liveIds} reload={reload} onError={onError} />
+      <ProjectsHeader adder={adder} onRecent={onRecent} onToggleAll={onToggleAll} allFolded={needle ? false : allFolded} canFold={canFold} searching={!!needle} />
       <div className="scroll">
-          <ProjectsHeader adder={adder}
-            onToggleAll={onToggleAll} allFolded={needle ? false : allFolded} canFold={canFold} searching={!!needle}
-            canSelect={displayed.length > 0} selecting={selection !== null}
-            onSelect={() => setSelection(new Set())} />
-        <div role="tree" aria-label={t("项目与会话")} aria-multiselectable={selection !== null} inert={busy === "batch"} data-action-keydown="tree.navigate" ref={treeKeys.ref} onKeyDown={treeKeys.onKeyDown}>
+        <div role="tree" aria-label={t("session.projects_and_conversations")} aria-multiselectable={selection !== null} inert={busy === "batch"} data-action-keydown="tree.navigate" ref={treeKeys.ref} onKeyDown={treeKeys.onKeyDown}>
           {shownTree.map((ws) => {
             // A fold is a resting-state preference; while a query is on it would hide
             // the very rows the query just found.
@@ -383,12 +390,12 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
               <div className="wsnode" key={ws.root} data-current={panesOf(ws.root).includes(active) ? "" : undefined} data-missing={ws.missing ? "" : undefined}>
                 {confirm === ws.root ? (
                   <Confirm
-                    what={t("从列表移除「{name}」？", { name: ws.name })}
+                    what={gone === ws.root ? t("session.folder_gone_remove_from_list", { name: ws.name }) : t("session.remove_name_from_the_list", { name: ws.name })}
                     hint={removeHint(doomed.length, busyPanes)}
-                    go={t("移除")}
+                    go={t("common.remove")}
                     danger={busyPanes > 0}
                     onGo={() => void dropWorkspace(ws)}
-                    onCancel={() => setConfirm("")}
+                    onCancel={() => { setConfirm(""); setGone(""); }}
                   />
                 ) : (
                   <div
@@ -409,7 +416,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                     onDragLeave={() => drag.leave(ws.root)}
                     onDrop={(ev) => drag.drop(ev, ws.root)}
                     onDragEnd={drag.end}
-                    className="wsrow"
+                    className="wsrow ds-proj"
                     role="treeitem"
                     aria-level={1}
                     aria-haspopup="menu"
@@ -429,42 +436,40 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                       openRowMenu(ws.root, ev.currentTarget);
                     }}
                   >
-                    <StudioIcon name="folder" className="wsfolder" />
-                    <span className="wsname" title={ws.root}>
+                    <WsMark open={hasChildren ? !shut : undefined} />
+                    <span className="wsname ds-title" title={ws.root}>
                       {ws.name}
                     </span>
-                    {/* A tag is this project's identity, so it takes a second line and
-                        the name keeps the row; the count and the actions share one slot. */}
+                    {/* A tag is this project's identity, so it takes a second line and the name keeps the row. */}
                     {(ws.isolated || twice.has(ws.name)) && (
                       <span className="wsmeta">
-                        <em className="wstag">{ws.isolated ? t("隔离") : parentOf(ws.root)}</em>
+                        <em className="wstag">{ws.isolated ? t("common.isolated") : parentOf(ws.root)}</em>
                       </span>
                     )}
                     <span className="wsacts">
                       {shut && <UnreadCount n={ws.sessions.filter((x) => x.unread).length} />}
                       <span className="rowswap">
-                      {ws.countsComplete !== false && <RowCount c={pagedScope ? sessionCount(ws, ws.sessions.length) : { shown: ws.sessions.length }} />}
                       <span className="rowbtns">
                       <button
                         data-action="session.new"
                         className="wsadd"
                         data-busy={busy === "new:" + ws.root ? "" : undefined}
                         disabled={ws.missing}
-                        title={t("在 {name} 下新建会话", { name: ws.name })}
-                        aria-label={t("在 {name} 下新建会话", { name: ws.name })}
+                        title={t("common.start_a_new_session_in", { name: ws.name })}
+                        aria-label={t("common.start_a_new_session_in", { name: ws.name })}
                         onClick={(ev) => {
                           ev.stopPropagation();
                           void startSession(ws);
                         }}
                       >
-                        <StudioIcon name="chat" />
+                        <StudioIcon name="plus" />
                       </button>
                       <button
                         className="wsmore"
                         data-action="workspace.menu"
                         data-target={ws.root}
-                        title={t("更多操作")}
-                        aria-label={t("项目操作：{name}", { name: ws.name })}
+                        title={t("common.more_actions")}
+                        aria-label={t("common.project_actions_name", { name: ws.name })}
                         aria-expanded={sessionMenu === ws.root}
                         aria-haspopup="menu"
                         onClick={(ev) => {
@@ -479,7 +484,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                       </span>
                     </span>
                     {sessionMenu === ws.root && createPortal(
-                      <div ref={sessionMenuPortal} className="session-pop" role="menu" aria-label={t("项目操作")} data-action-keydown="workspace.menu" data-target={ws.root} onKeyDown={workspaceMenuKeys} onClick={(ev) => ev.stopPropagation()}>
+                      <div ref={sessionMenuPortal} className="session-pop" role="menu" aria-label={t("common.project_actions")} data-action-keydown="workspace.menu" data-target={ws.root} onKeyDown={workspaceMenuKeys} onClick={(ev) => ev.stopPropagation()}>
                         <div className="session-pop-head">
                           <b>{ws.name}</b>
                           <small className="session-pop-path" title={ws.root}>{ws.root}</small>
@@ -487,9 +492,10 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                         <WorkspaceReveal ws={ws} hub={hub} dismiss={dismissMenu} onError={onError} />
                         {ws.remembered && <WorkspaceOrder root={ws.root} position={tree.filter((w) => w.remembered).findIndex((w) => w.root === ws.root)} total={tree.filter((w) => w.remembered).length}
                           hub={hub} reload={reload} dismiss={dismissMenu} onError={onError} />}
+                        <ProjectMenuExtras canSelect={displayed.length > 0} selecting={selection !== null} onSelect={() => { selectFrom.current = ws.root; setSelection(new Set()); }} dismiss={dismissMenu} />
                         <div className="session-pop-group">
                           <button className="danger" role="menuitem" data-action="workspace.remove" onClick={() => { setConfirm(ws.root); dismissMenu(); }}>
-                            <StudioIcon name="close" /><span>{t("从列表移除")}</span><small>{t("不删除文件")}</small>
+                            <StudioIcon name="close" /><span>{t("common.remove_from_the_list")}</span><small>{t("common.keeps_files")}</small>
                           </button>
                         </div>
                       </div>,
@@ -509,11 +515,11 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                       return (
                         <Confirm
                           key={session.path}
-                          what={t("删除「{name}」？", { name: rowLabel(session) })}
+                          what={t("common.delete_name", { name: rowLabel(session) })}
                           hint={sessionDeleteHint(session.copies?.length ?? 0, !!session.runtimeId, !!session.runtimeId && liveIds([session.runtimeId]).length > 0)}
-                          go={t("删除")}
+                          go={t("common.delete")}
                           danger
-                          alt={(session.copies?.length ?? 0) > 0 ? { label: t("连同 {n} 份副本删除", { n: session.copies!.length }), onGo: () => void dropSession(session, true) } : undefined}
+                          alt={(session.copies?.length ?? 0) > 0 ? { label: t("session.delete_with_n_copies", { n: session.copies!.length }), onGo: () => void dropSession(session, true) } : undefined}
                           onGo={() => void dropSession(session)}
                           onCancel={() => setConfirm("")}
                         />
@@ -532,7 +538,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                         aria-haspopup="menu"
                         data-action-keydown={selection ? ["session.selection"] : ["session.open", "session.delete", "session.menu", "session.move"]}
                         data-target={session.path}
-                        className="sessrow sessrow-context"
+                        className="sessrow sessrow-context ds-row"
                         role="treeitem"
                         aria-level={2}
                         aria-label={rowLabel(session)}
@@ -581,14 +587,12 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                           }
                         }}
                       >
-                        {selection && <input type="checkbox" className="session-select" tabIndex={-1} aria-label={t("选择会话：{name}", { name: rowLabel(session) })}
+                        {selection && <input type="checkbox" className="session-select" tabIndex={-1} aria-label={t("session.select_session_name", { name: rowLabel(session) })}
                           data-action-click="session.selection" data-action-change="session.selection" data-target={session.path} checked={selection.has(session.path)}
                           onClick={(ev) => ev.stopPropagation()} onChange={() => toggleSelection(session.path)} />}
-                        <i className="pip" />
-                        {!selection && <SessionPinAction target={session.path} title={rowLabel(session)}
-                          pinned={pinned.has(session.path)} enabled={quickActions} disabled={mutations.pending.has(session.path)} onPin={() => mutate(session, "pin")} />}
+                        <LeadDot unread={session.unread && run !== "running" && run !== "halt"} />
                         {editing === session.path ? (
-                          <input className="sessedit" aria-label={t("重命名该会话")} placeholder={t("聊天标题")} autoFocus
+                          <input className="sessedit" aria-label={t("common.rename_this_session")} placeholder={t("common.chat_title")} autoFocus
                             defaultValue={session.title || session.name}
                             onClick={(ev) => ev.stopPropagation()}
                             data-action-blur="session.rename" data-action-keydown="session.rename" data-target={session.path}
@@ -609,42 +613,18 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                               }
                             }} />
                         ) : (
-                          <span className="sesstitle" title={rowLabel(session)}>
-                            <span>{rowLabel(session)}</span>{session.isolated && <em className="sessarch" title={session.workspaceRoot}>{t("隔离")}</em>}{session.archived && <em className="sessarch">{t("已归档")}</em>}
-                            {session.metadataState === "pending" && <em className="sessarch">{t("正在读取摘要")}</em>}
-                            {session.metadataState === "error" && <em className="sessarch">{t("摘要暂不可用")}</em>}
+                          <span className="sesstitle ds-title" title={rowLabel(session)}>
+                            <span><Hit text={rowLabel(session)} needle={needle} /></span>{session.isolated && <em className="sessarch" title={session.workspaceRoot}>{t("common.isolated")}</em>}{session.archived && <em className="sessarch">{t("common.archived")}</em>}
+                            {session.metadataState === "pending" && <em className="sessarch">{t("session.reading_summary")}</em>}
+                            {session.metadataState === "error" && <em className="sessarch">{t("session.summary_unavailable")}</em>}
                           </span>
                         )}
+                        {!selection && <SessionPinAction target={session.path} title={rowLabel(session)}
+                          pinned={pinned.has(session.path)} enabled={quickActions} disabled={mutations.pending.has(session.path)} onPin={() => mutate(session, "pin")} />}
                         <PeerThreadMark path={session.path} />
-                        {session.unread && <UnreadDot />}
-                        <SessionAge at={session.lastActiveAt} />
-                        {kept.length > 0 && (
-                          <button
-                            className="sesscopies"
-                            aria-expanded={open}
-                            title={
-                              versions.length && copies.length
-                                ? t("早先版本与恢复副本")
-                                : versions.length
-                                  ? t("编辑、重新生成或回退之前的对话版本")
-                                  : t("本次对话被外部程序改写时留下的副本")
-                            }
-                            onClick={(ev) => {
-                              ev.stopPropagation();
-                              setSpread((prev) => {
-                                const next = new Set(prev);
-                                if (open) next.delete(session.path);
-                                else next.add(session.path);
-                                return next;
-                              });
-                            }}
-                          >
-                            {`+${kept.length}`}
-                          </button>
-                        )}
-                        {session.legacy && (
-                          <span className="sesslegacy" title={t("由 Reasonix 1.x 创建：Studio 只读打开，继续对话会另存为新会话")} aria-label={t("由 Reasonix 1.x 创建：Studio 只读打开，继续对话会另存为新会话")}>{t("旧")}</span>
-                        )}
+                        <SessionTail run={run} at={session.lastActiveAt} unread={session.unread} dot={false} />
+                        {!selection && <SessionMoreAction target={session.path} disabled={mutations.pending.has(session.path)}
+                          onOpen={(trigger) => openRowMenu(session.path, trigger)} />}
                         {quickActions && !selection && <SessionArchiveAction target={session.path} title={rowLabel(session)} archived={!!session.archived}
                           disabled={mutations.pending.has(session.path) || !!session.runtimeId && liveIds([session.runtimeId]).length > 0} onArchive={() => archive(session)} />}
                         {sessionMenu === session.path && (
@@ -667,9 +647,10 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                               void onClose([id]).catch(onError);
                             }}
                             onArchive={() => archive(session)}
-                            onBranch={onBranch && session.runtimeId ? () => { setSessionMenu(""); void onBranch(session.runtimeId!, `${rowLabel(session)} · ${t("分支")}`).catch(onError); } : undefined}
+                            onBranch={onBranch && session.runtimeId ? () => { setSessionMenu(""); void onBranch(session.runtimeId!, `${rowLabel(session)} · ${t("common.branch")}`).catch(onError); } : undefined}
                             onCopyInfo={() => { void copyText(sessionInfoText(session, session.workspaceRoot || ws.root)).catch(onError); setSessionMenu(""); }}
                             onExport={(format) => void saveSession(session, format)}
+                            keptCount={kept.length} keptOpen={open} onKept={() => { setSpread((prev) => { const next = new Set(prev); if (open) next.delete(session.path); else next.add(session.path); return next; }); setSessionMenu(""); }}
                             onDelete={() => { askDelete(session.path); setSessionMenu(""); }}
                             onMove={(direction) => { setSessionMenu(""); void order.move(session, direction); }}
                             canMove={order.canMove(ws, session)}
@@ -682,9 +663,9 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                           confirm === copy.path ? (
                             <Confirm
                               key={copy.path}
-                              what={version ? t("删除这个早先版本？") : t("删除这份恢复副本？")}
-                              hint={t("连同其记录一并删除")}
-                              go={t("删除")}
+                              what={version ? t("session.delete_this_earlier_version") : t("session.delete_this_recovery_copy")}
+                              hint={t("common.deletes_it_together_with_its")}
+                              go={t("common.delete")}
                               danger
                               onGo={() => void dropSession(copy)}
                               onCancel={() => setConfirm("")}
@@ -695,7 +676,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                               data-action-keydown={["session.open", "session.delete"]}
                               data-target={copy.path}
                               key={copy.path}
-                              className="sessrow sesscopy"
+                              className="sessrow sesscopy ds-row"
                               role="treeitem"
                               aria-level={3}
                               aria-selected={opening === copy.path}
@@ -714,16 +695,16 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                                 }
                               }}
                             >
-                              <i className="pip" />
-                              <span className="sesstitle" title={rowLabel(copy)}>
-                                <span>{version ? t("早先版本 · {n} 轮", { n: copy.turns ?? 0 }) : t("恢复副本")}</span>
+                              <span className="ds-lead" />
+                              <span className="sesstitle ds-title" title={rowLabel(copy)}>
+                                <span>{version ? t("session.earlier_version_n_turns", { n: copy.turns ?? 0 }) : t("session.recovery")}</span>
                               </span>
                               <button
                                 className="wsdel"
                                 data-action="session.delete"
                                 data-target={copy.path}
-                                title={t("删除该会话")}
-                                aria-label={t("删除该会话")}
+                                title={t("session.delete_this_session")}
+                                aria-label={t("session.delete_this_session")}
                                 onClick={(ev) => {
                                   ev.stopPropagation();
                                   setConfirm(copy.path);
@@ -741,7 +722,7 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                 <ListingProgress workspace={ws} searching={searching} onRetry={retry} />
                 {pagedScope && (hidden > 0 || unloaded(ws, loadedRows(ws.root)) > 0) && (
                   hidden === 0 && atCap(loadedRows(ws.root)) ? (
-                    <small className="sessnote">{ws.countsComplete === false ? t("用搜索查找更多会话") : t("还有 {n} 个较早的会话 · 用搜索查找", { n: unloaded(ws, loadedRows(ws.root)) })}</small>
+                    <small className="sessnote">{ws.countsComplete === false ? t("session.search_to_find_more_conversations") : t("session.n_older_conversations_use_search", { n: unloaded(ws, loadedRows(ws.root)) })}</small>
                   ) : (
                     <button
                       className="sessmore"
@@ -753,10 +734,10 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
                       }}
                     >
                       {paged[ws.root] === "loading"
-                        ? t("正在加载…")
+                        ? t("session.loading")
                         : paged[ws.root] === "failed"
-                          ? t("加载失败 · 重试")
-                          : ws.countsComplete === false ? t("显示更多") : t("显示更多（还有 {n} 个）", { n: hidden + unloaded(ws, loadedRows(ws.root)) })}
+                          ? t("common.failed_to_load_retry")
+                          : ws.countsComplete === false ? t("session.show_more") : t("common.show_more_n_left", { n: hidden + unloaded(ws, loadedRows(ws.root)) })}
                     </button>
                   )
                 )}
@@ -767,15 +748,14 @@ function WorkspacesView({ hub, tree, treeRead, answered = null, runtimes, active
           })}
           {!otherRows && shownTree.length === 0 && (tree.length > 0 || treeRead && (!!needle || scope !== "all")) && <TreeEmpty settled={tree.every((ws) => ws.countsComplete !== false) && answers(answered, { scope: kernelScope, q: asked })} onRetry={retry} />}
           {tree.length === 0 && (!treeRead || !otherRows && !needle && scope === "all") && (treeRead ? (
-            <div className="ws-empty">{t("尚无文件夹")}<button className="projects-open" data-action="workspace.add"
-              disabled={adder.busy} onClick={() => adder.add()}><StudioIcon name="folder" />{t("打开第一个项目")}</button></div>
+            <div className="ws-empty">{t("session.no_folders_yet")}<button className="projects-open" data-action="workspace.add"
+              disabled={adder.busy} onClick={() => adder.add()}><StudioIcon name="folder" />{t("session.open_your_first_project")}</button></div>
           ) : (
             <TreeReading onRetry={retry} />
           ))}
           {children}
         </div>
       </div>
-
     </>
   );
 }

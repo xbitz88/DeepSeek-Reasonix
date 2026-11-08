@@ -82,13 +82,8 @@ func (o *turnOrchestrator) runSubagentSkillTurnsGoalLoop(ctx context.Context, sk
 	expectedContinuationEpoch := o.c.goals.continuationToken()
 	images := o.c.resolveTurnImages(raw)
 	ctx = o.c.withVisionRouting(agent.WithSubagentImageCandidates(ctx, images.candidates))
-	// The skill turn's model requests count against the active goal's token
-	// budget, so bind a recorder for the span even though the sub-agent cannot
-	// call update_goal itself.
 	if scopeID, goal, ok := o.c.goals.deliveryScope(); ok {
 		ctx = agent.WithDeliveryExecutionScope(ctx, agent.DeliveryExecutionScope{ID: scopeID, TaskText: goal})
-		recorder := o.c.goals.newTurnRecorder(scopeID, o.c.goals.continuationToken())
-		o.c.goalUsageTee.setActiveRecorder(recorder)
 	}
 	startMessages := o.c.sessionMessageCount()
 	err := o.runSubagentSkillTurns(ctx, skills, task, raw, display, runner, planMode, images)
@@ -151,6 +146,8 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 	}
 	ctx, marker = c.beginTurn(ctx, startMessages, true)
 	ctx = c.announceAuthoredTurn(ctx, firstNonEmpty(raw, task), startMessages)
+	ctx = c.bindTurnScope(ctx, nil)
+	ctx = c.prepareTurnRootBudget(ctx)
 	c.executor.LandAuthoredUserMessage(ctx, provider.Message{Role: provider.RoleUser, Content: input, Images: images.userImages, CreatedAt: time.Now().UnixMilli()})
 
 	for _, sk := range skills {
@@ -259,6 +256,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	// Goal turns bind a scope+epoch recorder for update_goal and observational
 	// usage. It stays active through FSM/evaluator work; error paths clear it.
 	ctx = c.bindTurnScope(ctx, continuation)
+	ctx = c.prepareTurnRootBudget(ctx)
 	modelInput := input
 	if !turn.synthetic {
 		modelInput = c.withCapabilityRoute(ctx, input, turn.raw)
@@ -272,14 +270,15 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	}
 	err = c.runWithRunner(ctx, modelInput)
 	c.captureGoalRunWorkDuration(startMessages)
-	c.persistGoalDeliveryCheckpoint()
 	if err != nil {
 		// When the user explicitly cancels, keep the real prompt and any fully
 		// paired tool work. Partial reasoning/output remains durable for display
 		// but is marked local-only, and a bounded recovery summary is folded into
 		// the next real user turn (#5499, #6680).
 		if errors.Is(err, context.Canceled) && c.CancelRequested() {
-			if turn.synthetic || IsSyntheticUserMessage(turn.raw) {
+			if c.askSkipInFlight() {
+				c.dropInterruptedDisplayAfter(startMessages)
+			} else if turn.synthetic || IsSyntheticUserMessage(turn.raw) {
 				c.stripInterruptedSyntheticTurnMessagesAfter(startMessages)
 			} else {
 				c.stripCancelledVisibleTurnMessagesAfterWithFallback(startMessages, provider.Message{
@@ -381,8 +380,9 @@ func (o *turnOrchestrator) gatePlanApproval(ctx context.Context) error {
 	}
 	c.sharePlanRuntime()
 	// The plan is already visible as the assistant's answer, so the request
-	// carries no subject — it's purely the gate.
-	allow, err := c.planApproved(ctx)
+	// carries no subject; its input is the list approving will seed.
+	steps := PlanTodosJSON(proposal)
+	allow, err := c.planApproved(ctx, steps)
 	if err != nil {
 		// A stop or timeout leaves the plan unapproved, which is the same state
 		// as a revise: awaiting approval has no card left to answer it.
@@ -409,7 +409,7 @@ func (o *turnOrchestrator) gatePlanApproval(ctx context.Context) error {
 		c.plan().Transition(executing, planmode.Exit)
 		c.sharePlanRuntime()
 	}()
-	todoArgs := c.seedPlanTodos(proposal)
+	todoArgs := c.seedTodoArgs(steps)
 	execStart := c.sessionMessageCount()
 	// Starting plan execution is a real Recovery Episode boundary even though
 	// the follow-up turn is synthetic.
@@ -426,7 +426,11 @@ func (o *turnOrchestrator) gatePlanApproval(ctx context.Context) error {
 	}()
 	if err != nil {
 		if errors.Is(err, context.Canceled) && c.CancelRequested() {
-			c.stripInterruptedSyntheticTurnMessagesAfter(execStart)
+			if c.askSkipInFlight() {
+				c.dropInterruptedDisplayAfter(execStart)
+			} else {
+				c.stripInterruptedSyntheticTurnMessagesAfter(execStart)
+			}
 		}
 		return err
 	}
@@ -496,13 +500,9 @@ func (o *turnOrchestrator) runTurnLoopWithPreparedTurn(ctx context.Context, turn
 			return err
 		}
 		if !o.c.goals.active() {
-			// No Goal, but the host knows what the turn still owes. Finish it
-			// rather than handing the user a card that only says "continue".
 			o.c.goalUsageTee.setActiveRecorder(nil)
-			return o.continueUntilReady(ctx, err)
+			return err
 		}
-		// FinalReadinessError is absorbed below: the Goal FSM continues with
-		// the missing requirements as the next turn's prompt.
 	}
 	return o.continueGoal(ctx, expectedContinuationEpoch, err)
 }
@@ -558,10 +558,6 @@ func (o *turnOrchestrator) continueGoal(ctx context.Context, expectedContinuatio
 }
 
 func goalTurnErrorAbsorbable(err error) bool {
-	var readinessErr *agent.FinalReadinessError
-	if errors.As(err, &readinessErr) {
-		return true
-	}
 	_, _, ok := goalPauseFromRunError(err)
 	return ok
 }
@@ -598,22 +594,9 @@ func (o *turnOrchestrator) advanceGoalAfterTurn(ctx context.Context, expectedCon
 		return goalAdvanceResult{cont: false}
 	}
 
-	var readiness agent.ReadinessResult
-	var readinessErr *agent.FinalReadinessError
 	pauseCause, pauseReason, runPaused := goalPauseFromRunError(turnErr)
-	if errors.As(turnErr, &readinessErr) {
-		readiness = agent.ReadinessResult{
-			Ready:       false,
-			Missing:     append([]string(nil), readinessErr.Missing...),
-			Reason:      readinessErr.Reason,
-			ProgressKey: readinessErr.Reason,
-		}
-	} else if turnErr != nil && !runPaused {
-		// Terminal provider/host error: stop auto-continue without an FSM
-		// transition; the goal stays running for the next user turn.
+	if turnErr != nil && !runPaused {
 		return goalAdvanceResult{cont: false}
-	} else if c.executor != nil {
-		readiness = c.executor.ReadinessResult()
 	}
 	if gate := c.turnUserGate(); pauseCause == "" && gate != "" {
 		pauseCause, pauseReason = stopCauseUserGate, gate
@@ -624,11 +607,9 @@ func (o *turnOrchestrator) advanceGoalAfterTurn(ctx context.Context, expectedCon
 		report = recorder.validReport(expectedContinuationEpoch)
 	}
 
-	// The bounded evaluator runs once, only when the model gave no report and
-	// readiness has no definite missing list. Failures fail closed in the FSM.
 	var evaluator *goalEvaluatorVerdict
 	var evaluatorFailed string
-	if pauseCause == "" && report == nil && len(readiness.Missing) == 0 {
+	if pauseCause == "" && report == nil {
 		if c.evaluator == nil {
 			evaluatorFailed = "goal evaluator unavailable"
 		} else if verdict, err := c.evaluator.Evaluate(ctx, c.goalEvaluatorEvidence()); err != nil {
@@ -645,7 +626,6 @@ func (o *turnOrchestrator) advanceGoalAfterTurn(ctx context.Context, expectedCon
 
 	res := c.goals.advance(goalAdvanceInput{
 		report:           report,
-		readiness:        readiness,
 		evaluator:        evaluator,
 		evaluatorFailed:  evaluatorFailed,
 		todos:            c.goalTodos(),

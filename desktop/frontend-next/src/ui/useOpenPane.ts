@@ -4,8 +4,9 @@ import type { AgentPort } from "../port/port";
 import type { PaneReport } from "./Pane";
 import { t } from "../i18n";
 import { openSessionLimit } from "../state/prefs";
-import { newTaskComposition } from "../state/newTaskPreset";
-import { pushNote, pushToast } from "../state/toasts";
+import { forgetNewTaskPreset, newTaskComposition } from "../state/newTaskPreset";
+import { HttpError } from "../port/http_error";
+import { pushNote, pushOffer, pushToast } from "../state/toasts";
 import { reason } from "../i18n/kernel";
 import type { SessionSwitch } from "./sessionswitch";
 
@@ -35,7 +36,8 @@ export function useOpenPane({ hub, runtimes, panePorts, active, reportsRef, runs
   const placePane = useCallback(
     async (req: { root?: string; sessionPath?: string; agentComposition?: string }): Promise<Placed> => {
       const composition = newTaskComposition(req.agentComposition, req.sessionPath);
-      if (composition !== undefined && req.agentComposition === undefined) req = { ...req, agentComposition: composition };
+      const defaulted = composition !== undefined && req.agentComposition === undefined;
+      if (defaulted) req = { ...req, agentComposition: composition };
       // Blank means never written to and not working: a new session mid-turn has
       // no path in a stale pane list yet, and taking it over would hide its run.
       const blank = runtimes.find(
@@ -75,7 +77,7 @@ export function useOpenPane({ hub, runtimes, panePorts, active, reportsRef, runs
       // tab bar. A pane with no conversation in it has nothing to say about.
       const folded = (rt: RuntimeView) => {
         if (!rt.sessionPath && !reportsRef.current[rt.id]?.status?.sessionPath) return;
-        pushNote(t("标签数已到上限 {n}，已把「{title}」从标签栏收起，对话仍在列表里。", { n: limit, title: reportsRef.current[rt.id]?.title?.trim() || t("新会话") }));
+        pushNote(t("session.the_open_session_limit_n", { n: limit, title: reportsRef.current[rt.id]?.title?.trim() || t("common.new_session") }));
       };
       if (reusable && req.sessionPath) {
         folded(reusable);
@@ -92,7 +94,16 @@ export function useOpenPane({ hub, runtimes, panePorts, active, reportsRef, runs
         folded(idle[0]);
         await hub.close(retired);
       }
-      const rt = await hub.open(req);
+      let rt: RuntimeView;
+      try {
+        rt = await hub.open(req);
+      } catch (e) {
+        // A personal default whose preset was deleted since: the refusal names it,
+        // so it is dropped and the task opens as it would with no default.
+        if (!defaulted || !(e instanceof HttpError) || e.reason?.code !== "agent_composition.not_found") throw e;
+        forgetNewTaskPreset();
+        rt = await hub.open({ ...req, agentComposition: undefined });
+      }
       // Another folder needs its own runtime, so the blank one is retired
       // rather than left behind.
       if (blank && blank.id !== rt.id) await hub.close(blank.id);
@@ -101,6 +112,28 @@ export function useOpenPane({ hub, runtimes, panePorts, active, reportsRef, runs
     },
     [hub, runtimes, panePorts, active, reportsRef, runsRef, setRuntimes, setTakeover],
   );
+
+  // A history over the safe read limit cannot open whole; the newest part of it
+  // can, as a new session, and the original file is never touched.
+  const offerTail = (req: { root?: string; sessionPath?: string }) => {
+    const source = runtimes.find((rt) => !rt.host && rt.root === req.root && panePorts.has(rt.id)) ?? runtimes.find((rt) => panePorts.has(rt.id));
+    const port = source && panePorts.get(source.id);
+    const path = req.sessionPath;
+    if (!port || !path) return false;
+    pushOffer(t("session.this_sessions_history_is_over"), {
+      label: t("session.continue_from_the_most_recent"),
+      run: () => void (async () => {
+        try {
+          const tail = await port.continueFromTail(path);
+          await openPane({ root: req.root, sessionPath: tail.path });
+          pushNote(t("session.saved_the_most_recent_part", { n: tail.dropped }));
+        } catch (e) {
+          pushToast(reason(e));
+        }
+      })(),
+    });
+    return true;
+  };
 
   const flights = useRef(new Map<string, Promise<Placed>>());
   const openPane = useCallback(
@@ -127,6 +160,7 @@ export function useOpenPane({ hub, runtimes, panePorts, active, reportsRef, runs
         if (!placed.changed) return sw.end(ticket);
       } catch (e) {
         sw.end(ticket);
+        if (wanted && e instanceof HttpError && e.reason?.code === "session.replay_limit" && offerTail(req)) return;
         throw e;
       }
       void reloadPanes().finally(() => sw.end(ticket));

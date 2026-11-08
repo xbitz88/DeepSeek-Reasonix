@@ -1,30 +1,51 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import type { AgentPort, BackupApplyResult, BackupCategory, BackupEntry, BackupPlan, BackupPlanItem, BackupPluginRef } from "../port/port";
 import { AddPlugin } from "./AddPlugin";
+import { StudioIcon } from "./StudioIcon";
 
 export const CATEGORY_LABEL: Record<BackupCategory, string> = {
-  settings: "模型与界面设置",
-  extensions: "技能、插件与 MCP",
-  memory: "长期记忆",
-  automation: "Hooks 与状态栏命令",
-  secrets: "API 密钥",
+  settings: "data.models_and_interface",
+  extensions: "data.skills_plugins_and_mcp",
+  memory: "data.long_term_memory",
+  automation: "data.hooks_and_status_line_command",
+  secrets: "data.api_keys",
 };
 
 const STATUS_LABEL: Record<BackupPlanItem["status"], string> = {
-  new: "本机没有",
-  changed: "与本机不同",
-  same: "与本机相同",
-  install: "需安装",
+  new: "data.not_on_this_machine",
+  changed: "data.differs_from_this_machine",
+  same: "data.same_as_this_machine",
+  install: "data.needs_install",
 };
 
 const CONSENT_LABEL: Record<string, string> = {
-  executes: "我已看过这条命令，允许它在本机运行",
-  endpoint: "我确认允许把对话和本机保存的密钥发往这个地址",
-  replaces_secret: "我确认用备份里的密钥替换本机已保存的密钥",
-  imports: "我已读过这份指令文件，允许它引用其中列出的文件",
+  executes: "data.i_have_read_this_command",
+  endpoint: "data.i_allow_conversations_and_the",
+  replaces_secret: "data.i_allow_the_key_in",
+  imports: "data.i_have_read_this_instruction",
 };
+
+// A restore is asked for and read in a dialog; what it did is said afterwards,
+// in the page, in one strip per outcome.
+function RestoreDialog({ title, onClose, footer, wide, children }: { title: string; onClose: () => void; footer: ReactNode; wide?: boolean; children: ReactNode }) {
+  return createPortal(
+    <div className="ns-veil" data-action-mousedown="layer.dismiss" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="ns-dlg bk-dlg" data-wide={wide ? "" : undefined} role="dialog" aria-modal="true" aria-label={title} data-action-keydown="layer.dismiss"
+        onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }}>
+        <header>
+          <h3>{title}</h3>
+          <button type="button" className="ns-x" data-action="layer.dismiss" aria-label={t("common.close")} title={t("common.close")} onClick={onClose}><StudioIcon name="close" /></button>
+        </header>
+        <div className="bk-dlg-body">{children}</div>
+        <footer>{footer}</footer>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 // The preview is the kernel's: which rows need consent, and why, is decided
 // there and rechecked on apply. This panel only collects two separate answers
@@ -42,7 +63,7 @@ export interface RestoreSource {
 
 export function accountBackupSource(port: AgentPort, backup: BackupEntry): RestoreSource {
   return {
-    name: backup.label || t("未命名备份"),
+    name: backup.label || t("data.untitled_backup"),
     preview: (passphrase) => port.previewBackup(backup.id, passphrase),
     apply: (planId, items, consented) => port.applyBackup(planId, items, consented),
   };
@@ -100,35 +121,28 @@ export function BackupRestore({ port, source, onClose }: { port: AgentPort; sour
 
   if (result) {
     return (
-      <div className="bk-restore" data-action="backup.result">
-        <p className="acct-note">{t("已恢复 {n} 项。", { n: result.applied.length })}</p>
-        {result.failed?.map((f) => (
-          <p key={f.id} className="acct-note" data-err="">
-            {f.id}：{f.error}
-          </p>
-        ))}
-        {result.reloadError && <p className="acct-note">{t("配置已写入，但当前会话未能重新加载：{e}", { e: result.reloadError })}</p>}
-        {!!result.plugins?.length && (
-          <>
-            <p className="acct-note">{t("以下插件需要走正常的安装确认：")}</p>
-            <ul className="bk-list">
-              {result.plugins.map((p) => (
-                <li key={p.name} className="bk-row">
-                  <div className="who">
-                    <span className="nm">{p.name}</span>
-                    <code className="meta">{p.source}{p.version ? " · " + p.version : ""}</code>
-                  </div>
-                  <button className="btn sm" data-action="backup.install-plugin" data-target={p.name} disabled={installing?.name === p.name} onClick={() => setInstalling({ ...p })}>
-                    {t("安装…")}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        <div className="bk-acts">
-          <button className="act" data-action="backup.done" onClick={onClose}>{t("完成")}</button>
+      <div className="bk-result" data-action="backup.result">
+        <div className="bk-strip" data-tone="ok">
+          <StudioIcon name="check" /><span>{t("data.restored_n_items", { n: result.applied.length })}</span>
+          <button type="button" className="ns-cancel" data-action="backup.done" onClick={onClose}>{t("common.done")}</button>
         </div>
+        {result.failed?.map((f) => (
+          <div key={f.id} className="bk-strip" data-tone="warn" role="alert"><StudioIcon name="warning" /><span>{f.id}：{f.error}</span></div>
+        ))}
+        {result.reloadError && <div className="bk-strip" data-tone="warn"><StudioIcon name="warning" /><span>{t("data.the_setup_was_written_but", { e: result.reloadError })}</span></div>}
+        {!!result.plugins?.length && (
+          <div className="bk-strip" data-tone="plain" data-plugins="">
+            <span>{t("data.these_plugins_go_through_the")}</span>
+            {result.plugins.map((p) => (
+              <span key={p.name} className="bk-plug">
+                <code>{p.name}{p.version ? " " + p.version : ""}</code>
+                <button className="btn sm" data-action="backup.install-plugin" data-target={p.name} disabled={installing?.name === p.name} onClick={() => setInstalling({ ...p })}>
+                  {t("data.install")}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {installing && (
           <AddPlugin key={installing.name} port={port} source={installing.source} onClose={() => setInstalling(null)} onInstalled={() => setInstalling((current) => current === installing ? null : current)} />
         )}
@@ -138,31 +152,37 @@ export function BackupRestore({ port, source, onClose }: { port: AgentPort; sour
 
   if (!plan) {
     return (
-      <div className="bk-restore">
-        <p className="acct-note">{t("输入备份「{name}」的加密口令，先预览它和本机的差异，不会立即写入。", { name: source.name })}</p>
-        <div className="bk-fields">
+      <RestoreDialog title={t("data.restore_a_backup")} onClose={onClose} footer={<>
+        <button type="button" className="ns-cancel" data-action="backup.cancel" onClick={onClose}>{t("common.cancel")}</button>
+        <button type="button" className="btn" data-primary data-action="backup.preview" disabled={!pass || busy} onClick={() => void open()}>
+          <StudioIcon name="lock" />{t(busy ? "data.decrypting" : "data.preview_differences")}
+        </button>
+      </>}>
+        <p className="acct-note">{t("data.enter_the_passphrase_for_name", { name: source.name })}</p>
+        <div className="bk-fields" data-one="">
           <label className="grow">
-            <span>{t("加密口令")}</span>
-            <input data-action="backup.passphrase" data-target="open" type="password" autoComplete="current-password" disabled={busy} value={pass} onChange={(e) => setPass(e.target.value)} />
+            <span>{t("data.passphrase")}</span>
+            <input autoFocus data-action-change="backup.passphrase" data-action-keydown="backup.restore" data-target="open" type="password" autoComplete="current-password" disabled={busy} value={pass} onChange={(e) => setPass(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && pass && !busy) void open(); }} />
           </label>
         </div>
-        <div className="bk-acts">
-          <button className="act" data-primary data-action="backup.preview" disabled={!pass || busy} onClick={() => void open()}>
-            {t(busy ? "正在解密…" : "预览差异")}
-          </button>
-          <button className="act" data-action="backup.cancel" onClick={onClose}>{t("取消")}</button>
-        </div>
         {error && <p className="acct-note" data-err="">{error}</p>}
-      </div>
+      </RestoreDialog>
     );
   }
 
   return (
-    <div className="bk-restore">
+    <RestoreDialog title={t("data.restore_a_backup")} onClose={onClose} wide footer={<>
+      {blocked.length > 0 && <span className="acct-note">{t("data.n_items_still_need_confirmation", { n: blocked.length })}</span>}
+      <button type="button" className="ns-cancel" data-action="backup.cancel" onClick={onClose}>{t("common.cancel")}</button>
+      <button type="button" className="btn" data-primary data-action="backup.apply" disabled={busy || picked.size === 0 || blocked.length > 0} onClick={() => void apply()}>
+        {t(busy ? "data.restoring" : "data.restore_n_selected", { n: picked.size })}
+      </button>
+    </>}>
       {!plan.samePlatform && (
         <div className="find" data-lvl="warn" role="note">
-          <span className="t">{t("这份备份来自 {p}", { p: plan.platform })}</span>
-          <span className="why">{t("命令和路径在另一种系统上可能无法运行，这类项目默认不勾选。")}</span>
+          <span className="t">{t("data.this_backup_comes_from_p", { p: plan.platform })}</span>
+          <span className="why">{t("data.commands_and_paths_may_not")}</span>
         </div>
       )}
       <ul className="bk-plan">
@@ -179,12 +199,12 @@ export function BackupRestore({ port, source, onClose }: { port: AgentPort; sour
               <code key={d} className="sum">{d}</code>
             ))}
             {it.content !== undefined && it.content !== "" && <pre className="body">{it.content}</pre>}
-            {it.previous && <span className="prev">{t("本机现为：")}<code>{it.previous}</code></span>}
-            {!!it.files && <span className="prev">{t("{n} 个文件", { n: it.files })}</span>}
+            {it.previous && <span className="prev">{t("data.here_now")}<code>{it.previous}</code></span>}
+            {!!it.files && <span className="prev">{t("common.n_files", { n: it.files })}</span>}
             {it.paths?.filter((p) => !p.exists).map((p) => (
-              <span key={p.path} className="warn">{t("本机不存在：{p}", { p: p.path })}</span>
+              <span key={p.path} className="warn">{t("data.missing_here_p", { p: p.path })}</span>
             ))}
-            {it.crossPlatform && <span className="warn">{t("来自另一种系统，可能无法运行")}</span>}
+            {it.crossPlatform && <span className="warn">{t("data.from_another_system_it_may")}</span>}
             {it.consent && picked.has(it.id) && (
               <label className="allow">
                 <input type="checkbox" disabled={busy} checked={allowed.has(it.id)} onChange={() => setAllowed((s) => flip(s, it.id))} data-action="backup.allow" data-target={it.id} />
@@ -194,15 +214,8 @@ export function BackupRestore({ port, source, onClose }: { port: AgentPort; sour
           </li>
         ))}
       </ul>
-      {!!plan.omitted?.length && <p className="acct-note">{t("备份时有 {n} 个文件过大或无法读取，未包含在内。", { n: plan.omitted.length })}</p>}
-      <div className="bk-acts">
-        <button className="act" data-primary data-action="backup.apply" disabled={busy || picked.size === 0 || blocked.length > 0} onClick={() => void apply()}>
-          {t(busy ? "正在恢复…" : "恢复所选 {n} 项", { n: picked.size })}
-        </button>
-        <button className="act" data-action="backup.cancel" onClick={onClose}>{t("取消")}</button>
-        {blocked.length > 0 && <span className="acct-note">{t("还有 {n} 项需要逐项确认", { n: blocked.length })}</span>}
-      </div>
+      {!!plan.omitted?.length && <p className="acct-note">{t("data.n_files_were_too_large", { n: plan.omitted.length })}</p>}
       {error && <p className="acct-note" data-err="">{error}</p>}
-    </div>
+    </RestoreDialog>
   );
 }

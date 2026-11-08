@@ -6,9 +6,9 @@ import { onSessionQuickActionsChange, showsSessionQuickActions } from "../state/
 import { useDismiss } from "./dismiss";
 import { pinToViewport } from "./place";
 import { SessionAge } from "./SessionAge";
-import { SessionArchiveAction, SessionPinAction } from "./SessionRowActions";
+import { LeadDot } from "./UnreadMark";
+import { SessionArchiveAction, SessionMoreAction, SessionPinAction } from "./SessionRowActions";
 import { StudioIcon } from "./StudioIcon";
-import { UnreadDot } from "./UnreadMark";
 import { workspaceMenuKeys } from "./WorkspaceOrder";
 import { asksDelete } from "./keys";
 import type { SessionMutation } from "./useSessionMutation";
@@ -41,7 +41,7 @@ export function RemoteSessionRow({ host, target, session, held, active, busy, pe
     setAt(null);
     onWrite(kind, row.current);
   };
-  return <div ref={row} className="sessrow sessrow-remote" role="treeitem" aria-level={2} aria-label={title} tabIndex={0}
+  return <div ref={row} className="sessrow sessrow-remote ds-row" role="treeitem" aria-level={2} aria-label={title} tabIndex={0}
     aria-selected={held?.id === active} data-on={held?.id === active ? "" : undefined}
     data-live={held ? "" : undefined} data-unread={session.unread ? "" : undefined}
     data-busy={pending || busy ? "" : undefined} data-target={target}
@@ -58,32 +58,30 @@ export function RemoteSessionRow({ host, target, session, held, active, busy, pe
       }
       if (asksDelete(event)) { event.preventDefault(); onDelete(row.current); }
     }}>
-    <i className="pip" />
+    <LeadDot unread={session.unread} />
+    <span className="sesstitle ds-title" title={title}><span>{title}</span>{session.isolated && <em className="sessarch" title={session.workspaceRoot}>{t("common.isolated")}</em>}{session.archived && <em className="sessarch">{t("common.archived")}</em>}</span>
     <SessionPinAction target={target} title={title} pinned={!!session.pinned} enabled={quick} disabled={!!pending || busy} onPin={() => write("pin")} />
-    <span className="sesstitle" title={title}><span>{title}</span>{session.isolated && <em className="sessarch" title={session.workspaceRoot}>{t("隔离")}</em>}{session.archived && <em className="sessarch">{t("已归档")}</em>}</span>
-    {session.unread && <UnreadDot />}
-    <SessionAge at={session.lastActiveAt} />
-    {session.legacy && <span className="sesslegacy" title={t("由 Reasonix 1.x 创建：Studio 只读打开，继续对话会另存为新会话")}
-      aria-label={t("由 Reasonix 1.x 创建：Studio 只读打开，继续对话会另存为新会话")}>{t("旧")}</span>}
+    <SessionAge at={session.lastActiveAt} unread={session.unread} dot={false} />
+    <SessionMoreAction target={target} disabled={!!pending || busy} onOpen={(trigger) => { const rect = trigger.getBoundingClientRect(); setAt({ x: rect.right, y: rect.top }); }} />
     {quick && <SessionArchiveAction target={target} title={title} archived={!!session.archived} disabled={!!pending || busy || live} onArchive={() => write("archive")} />}
-    {at && createPortal(<div ref={menu} className="session-pop" role="menu" aria-label={t("会话操作")}
+    {at && createPortal(<div ref={menu} className="session-pop" role="menu" aria-label={t("common.session_actions")}
       data-action-keydown="session.menu" onKeyDown={workspaceMenuKeys} onClick={(event) => event.stopPropagation()}>
       <div className="session-pop-head"><b>{title}</b><small>{host}</small></div>
       <div className="session-pop-group">
         <button role="menuitem" data-action="session.pin" data-target={target} disabled={!!pending || busy} onClick={() => { close(); write("pin"); }}>
-          <StudioIcon name="pin" /><span>{t(session.pinned ? "取消置顶" : "置顶会话")}</span>
+          <StudioIcon name="pin" /><span>{t(session.pinned ? "common.unpin" : "common.pin_session")}</span>
         </button>
         {session.unread && (
           <button role="menuitem" data-action="session.mark-read" data-target={target} disabled={!!pending || busy} onClick={() => { close(); write("read"); }}>
-            <StudioIcon name="check" /><span>{t("标为已读")}</span>
+            <StudioIcon name="check" /><span>{t("common.mark_as_read")}</span>
           </button>
         )}
         <button role="menuitem" data-action="session.archive" data-target={target} data-value={session.archived ? "restore" : "archive"}
           disabled={!!pending || busy || live} onClick={() => { close(); write("archive"); }}>
-          <StudioIcon name="archive" /><span>{t(session.archived ? "取消归档" : "归档会话")}</span>
+          <StudioIcon name="archive" /><span>{t(session.archived ? "common.unarchive" : "common.archive_session")}</span>
         </button>
         <button role="menuitem" className="danger" data-action="session.delete" data-target={target} disabled={!!pending || busy} onClick={() => { close(); onDelete(row.current); }}>
-          <StudioIcon name="trash" /><span>{t("删除会话")}</span>
+          <StudioIcon name="trash" /><span>{t("common.delete_session")}</span>
         </button>
       </div>
     </div>, document.body)}

@@ -35,11 +35,6 @@ func (p *budgetEffectProvider) Stream(_ context.Context, req provider.Request) (
 	p.mu.Unlock()
 	ch := make(chan provider.Chunk, 2)
 	defer close(ch)
-	if req.Summary {
-		ch <- provider.Chunk{Type: provider.ChunkText, Text: "## Standing facts\n- none recorded"}
-		ch <- provider.Chunk{Type: provider.ChunkDone}
-		return ch, nil
-	}
 	asked, answered := "", ""
 	for _, m := range req.Messages {
 		switch {
@@ -69,35 +64,12 @@ func (p *budgetEffectProvider) Stream(_ context.Context, req provider.Request) (
 	return ch, nil
 }
 
-func (p *budgetEffectProvider) requests() []provider.Request {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]provider.Request(nil), p.reqs...)
-}
-
-func isSummaryRequest(req provider.Request) bool {
-	return req.Summary
-}
-
-func countBudgetBlocks(req provider.Request) int {
-	n := 0
-	for _, m := range req.Messages {
-		n += strings.Count(m.Content, "<context-budget>")
-	}
-	return n
-}
-
-func budgetFixture(t *testing.T, kind, models, overrides string, sink event.Sink) (*budgetEffectProvider, func(prompt string)) {
-	rec, run, _ := budgetFixtureAgent(t, kind, models, overrides, sink)
-	return rec, run
-}
-
 func budgetFixtureAgent(t *testing.T, kind, models, overrides string, sink event.Sink) (*budgetEffectProvider, func(prompt string), func() tool.ContextBudget) {
 	t.Helper()
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
-	rec := &budgetEffectProvider{bulk: strings.Repeat("work output line with detail. ", 400)}
+	rec := &budgetEffectProvider{bulk: strings.Repeat("work output line with detail. ", 380)}
 	provider.Register(kind, func(provider.Config) (provider.Provider, error) { return rec, nil })
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "conn/`+strings.Split(models, ",")[0]+`"
@@ -137,43 +109,7 @@ func quoteList(csv string) string {
 	return strings.Join(parts, ", ")
 }
 
-// retiredBudgetNoticeCode is the notice code the push used; no sink may see it.
-const retiredBudgetNoticeCode = "context_budget"
-
 const smallWindow = "model_overrides = { small = { context_window = 32000 } }\n"
-
-// Context pressure is never pushed: through every rung and past the compaction
-// trigger, no request carries a budget block and the frontend sees no warning.
-func TestEffectContextPressureIsNeverPushed(t *testing.T) {
-	var mu sync.Mutex
-	var warns []event.Event
-	sink := event.FuncSink(func(e event.Event) {
-		if e.Kind == event.Notice && e.Code == retiredBudgetNoticeCode {
-			mu.Lock()
-			warns = append(warns, e)
-			mu.Unlock()
-		}
-	})
-	rec, run := budgetFixture(t, "boot-budget-nopush", "small", smallWindow, sink)
-	for _, prompt := range []string{"start the task", "keep going", "keep going", "keep going", "keep going"} {
-		run(prompt)
-	}
-	folded := false
-	for i, req := range rec.requests() {
-		if n := countBudgetBlocks(req); n != 0 {
-			t.Fatalf("request %d carried %d context-budget blocks; pressure must not be pushed", i, n)
-		}
-		folded = folded || isSummaryRequest(req)
-	}
-	if !folded {
-		t.Fatal("the conversation never reached the compaction trigger; the fixture proves nothing")
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(warns) != 0 {
-		t.Fatalf("the frontend received %d context-budget notices, first: %+v", len(warns), warns[0])
-	}
-}
 
 // The model can still ask: under the same pressure the tool answers ok, and its
 // figures are the ones the compaction trigger compares against.
@@ -205,9 +141,12 @@ func TestEffectContextBudgetToolAnswersUnderPressure(t *testing.T) {
 	}
 }
 
-func TestEffectContextBudgetToolIsOffered(t *testing.T) {
+func TestEffectContextBudgetToolIsIndexedNotOffered(t *testing.T) {
 	reqs := effectRun(t, "boot-budget-tool-surface", "", ablation.Set{})
-	if !toolNames(reqs[0])["context_budget"] {
-		t.Fatalf("context_budget absent from the provider tool surface: %v", toolNames(reqs[0]))
+	if toolNames(reqs[0])["context_budget"] {
+		t.Fatalf("context_budget is in the first-round schema: %v", toolNames(reqs[0]))
+	}
+	if !strings.Contains(capabilityDescription(reqs[0]), "tool:context_budget") {
+		t.Fatalf("use_capability does not index context_budget: %s", capabilityDescription(reqs[0]))
 	}
 }

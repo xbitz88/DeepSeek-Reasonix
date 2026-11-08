@@ -1,70 +1,31 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useContext } from "react";
 import { t } from "../i18n";
 import type { Adder } from "./addws";
-import { useDismiss } from "./dismiss";
-import { pinToViewport } from "./place";
 import { StudioIcon } from "./StudioIcon";
-import { workspaceMenuKeys } from "./WorkspaceOrder";
+import { RailFilterContext } from "./railfilter";
 
-export function ProjectsHeader({ adder, canSelect, selecting, onSelect, onToggleAll, allFolded, canFold, searching }: {
-  adder: Adder;
-  canSelect: boolean;
-  selecting: boolean;
-  onSelect: () => void;
-  onToggleAll?: () => void;
-  allFolded?: boolean;
-  canFold?: boolean;
-  searching?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const more = useRef<HTMLButtonElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  const close = () => { setOpen(false); more.current?.focus(); };
-  useDismiss(open, more, close, menu);
-  useEffect(() => {
-    if (open) menu.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
-  }, [open]);
-  useLayoutEffect(() => {
-    const anchor = more.current?.getBoundingClientRect();
-    if (open && anchor && menu.current) pinToViewport(menu.current, anchor.right + 8, anchor.top - 7, 12);
-  }, [open]);
-
+export function ProjectsHeader({ adder, onRecent, onToggleAll, allFolded, canFold, searching }: { adder: Adder; onRecent?: () => void; onToggleAll?: () => void; allFolded?: boolean; canFold?: boolean; searching?: boolean }) {
+  const filter = useContext(RailFilterContext);
   return (
     <div className="projects-header">
-      <div className="projects-heading">
-        <span className="projects-heading-title">{t("项目")}
-          {onToggleAll && <button className="projects-toggle" data-action="workspace.fold-all"
-            disabled={!canFold || searching} aria-expanded={!allFolded}
-            title={t(searching ? "搜索时自动展开项目" : allFolded ? "展开所有项目" : "收起所有项目")}
-            aria-label={t(allFolded ? "展开所有项目" : "收起所有项目")} onClick={onToggleAll}>
+      <div className="projects-tabs">
+        <div className="vtabs" role="group" aria-label={t("session.session_view")}>
+          <button type="button" className="vtab" data-action="session.view" data-value="projects" aria-pressed="true">{t("common.project")}</button>
+          {onRecent && <button type="button" className="vtab" data-action="session.recent" title={t("session.recent_sessions")} aria-label={t("session.recent_sessions")} onClick={onRecent}>{t("session.recent")}</button>}
+        </div>
+        <span className="projects-spacer" />
+        {onToggleAll && (
+          <button className="projects-add projects-fold" data-action="workspace.fold-all" disabled={!canFold || searching} aria-expanded={!allFolded}
+            title={t(searching ? "session.projects_expand_automatically_while_searching" : allFolded ? "session.expand_all_projects" : "session.collapse_all_projects")} aria-label={t(allFolded ? "session.expand_all_projects" : "session.collapse_all_projects")} onClick={onToggleAll}>
             <StudioIcon name={allFolded ? "expandAll" : "collapseAll"} />
-          </button>}
-        </span>
-        <span className="projects-heading-actions">
-          <button className="projects-add" data-busy={adder.busy ? "" : undefined} disabled={adder.busy}
-            title={t("打开项目")} aria-label={t("打开项目")} data-action="workspace.add" onClick={() => adder.add()}>
-            <StudioIcon name="plus" />
           </button>
-          <button ref={more} className="wsmore" title={t("更多操作")}
-            aria-label={t("项目列表的更多操作")} aria-haspopup="menu" aria-expanded={open}
-            data-action="machine.menu" onClick={() => setOpen((v) => !v)}>
-            <StudioIcon name="more" />
-          </button>
-        </span>
+        )}
+        {filter}
+        <button className="projects-add" data-busy={adder.busy ? "" : undefined} disabled={adder.busy}
+          title={t("session.open_project")} aria-label={t("session.open_project")} data-action="workspace.add" onClick={() => adder.add()}>
+          <StudioIcon name="plus" />
+        </button>
       </div>
-      {open && createPortal(
-        <div ref={menu} className="session-pop" role="menu" aria-label={t("项目列表的更多操作")}
-          data-action-keydown="machine.menu" onKeyDown={workspaceMenuKeys}>
-          <div className="session-pop-head"><b>{t("项目")}</b></div>
-          <div className="session-pop-group">
-            <button role="menuitem" data-action="session.selection" data-value="start"
-              disabled={!canSelect || selecting} onClick={() => { close(); onSelect(); }}>
-              <StudioIcon name="check" /><span>{t("选择本机会话")}</span>
-            </button>
-          </div>
-        </div>, document.body,
-      )}
     </div>
   );
 }

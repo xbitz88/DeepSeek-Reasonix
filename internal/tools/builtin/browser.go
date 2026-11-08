@@ -48,19 +48,6 @@ func BrowserTools(session *browser.Session) []tool.Tool {
 	return []tool.Tool{browserOpen{session: session}, browserRead{session: session}, browserAct{session: session}}
 }
 
-// BrowserBound reports whether t is a browser tool with a browser session behind it.
-func BrowserBound(t tool.Tool) bool {
-	switch b := t.(type) {
-	case browserOpen:
-		return b.session != nil
-	case browserRead:
-		return b.session != nil
-	case browserAct:
-		return b.session != nil
-	}
-	return false
-}
-
 func tabArg(args json.RawMessage) string {
 	var p struct {
 		Tab string `json:"tab"`
@@ -76,8 +63,9 @@ type browserOpen struct{ session *browser.Session }
 func (browserOpen) Name() string { return "browser_open" }
 
 func (browserOpen) Description() string {
-	return "Load a page in your browser and return its snapshot: one element per line, with [eN] refs for browser_act. " +
-		"url is http(s), about:blank or a workspace file. Without url, tab switches to that tab; close closes it."
+	return "Load a page and return its snapshot, one element per line with [eN] refs. " +
+		"url: http(s), about:blank or a workspace file; no url switches to tab; close closes. " +
+		"The user sees tabs: web_fetch reads static text, close tabs when done."
 }
 
 func (browserOpen) Schema() json.RawMessage {

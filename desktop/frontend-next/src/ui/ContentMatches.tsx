@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { t } from "../i18n";
-import type { HistoryHit, HubPort, TreeWorkspace } from "../port/hub";
+import type { HistoryHit, HistoryIndex, HistorySearch, HubPort, TreeWorkspace } from "../port/hub";
 import { useRailQuery } from "./railsearch";
 
 const MIN_CHARS = 2;
 const SETTLE_MS = 300;
 
-type Reading = { for: string; hits: HistoryHit[] | "failed" };
+type Reading = { for: string; answer: HistorySearch | "failed" };
 
 function titleOf(hit: HistoryHit, tree: TreeWorkspace[]): string {
   const listed = tree.flatMap((w) => w.sessions).find((s) => s.path === hit.path);
@@ -19,6 +19,22 @@ function rootOf(hit: HistoryHit, tree: TreeWorkspace[]): string | undefined {
     if (session) return session.workspaceRoot || workspace.root;
   }
   return hit.workspace || undefined;
+}
+
+/** One line when the index could not answer for every session it knows. Without
+ *  it, a source it failed to read and a query that matched nothing reach this
+ *  rail as the same empty list. */
+function indexNote(index: HistoryIndex | undefined): { reason: "failed" | "building"; note: string } | null {
+  if (!index?.partial) return null;
+  if (index.reason === "failed") {
+    return { reason: "failed", note: t("chat.some_history_could_not_be") };
+  }
+  return {
+    reason: "building",
+    note: index.total > 0
+      ? t("chat.the_history_index_is_still_2", { indexed: index.indexed, total: index.total })
+      : t("chat.the_history_index_is_still"),
+  };
 }
 
 /** Conversations whose words, not names, match what the rail is searching for.
@@ -40,8 +56,8 @@ export function ContentMatches({ hub, tree, onOpen, onError, onReference }: {
     let current = true;
     const timer = window.setTimeout(() => {
       hub.searchHistory(needle).then(
-        (hits) => current && setRead({ for: needle, hits }),
-        () => current && setRead({ for: needle, hits: "failed" }),
+        (answer) => current && setRead({ for: needle, answer }),
+        () => current && setRead({ for: needle, answer: "failed" }),
       );
     }, SETTLE_MS);
     return () => {
@@ -51,15 +67,21 @@ export function ContentMatches({ hub, tree, onOpen, onError, onReference }: {
   }, [asks, needle, hub]);
 
   if (!asks) return null;
-  const answered = read?.for === needle ? read.hits : null;
-  if (answered === null) return <div className="content-matches" role="status" data-state="reading">{t("正在搜索对话内容…")}</div>;
-  if (answered === "failed") return <div className="content-matches" role="status" data-state="failed">{t("对话内容暂时搜不了，稍后再试")}</div>;
-  if (answered.length === 0) return null;
+  const answer = read?.for === needle ? read.answer : null;
+  if (answer === null) return <div className="content-matches" role="status" data-state="reading">{t("chat.searching_conversation_text")}</div>;
+  if (answer === "failed") return <div className="content-matches" role="status" data-state="failed">{t("chat.conversation_text_cannot_be_searched")}</div>;
+  const note = indexNote(answer.index);
+  if (answer.hits.length === 0) {
+    return note
+      ? <div className="content-matches" role="status" data-state="incomplete" data-reason={note.reason}>{note.note}</div>
+      : null;
+  }
   return (
-    <section className="content-matches" aria-label={t("对话内容匹配")}>
-      <h3>{t("对话内容匹配")}</h3>
+    <section className="content-matches" aria-label={t("chat.matches_in_conversation_text")}>
+      <h3>{t("chat.matches_in_conversation_text")}</h3>
+      {note && <p className="content-matches-note" role="status" data-state="incomplete" data-reason={note.reason}>{note.note}</p>}
       <ul>
-        {answered.map((hit) => (
+        {answer.hits.map((hit) => (
           <li key={hit.path}>
             <button
               type="button"
@@ -72,7 +94,7 @@ export function ContentMatches({ hub, tree, onOpen, onError, onReference }: {
             </button>
             {onReference && (
               <button type="button" className="content-match-ref" data-action="session.reference-match" data-target={hit.path}
-                aria-label={t("引用「{title}」到输入框", { title: titleOf(hit, tree) })} title={t("引用到输入框")}
+                aria-label={t("chat.reference_title_in_the_message", { title: titleOf(hit, tree) })} title={t("chat.quote_into_the_composer")}
                 onClick={() => onReference(hit.id, titleOf(hit, tree))}>#</button>
             )}
           </li>

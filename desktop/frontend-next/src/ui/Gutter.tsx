@@ -1,6 +1,5 @@
 import { useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
-import { t } from "../i18n";
 
 export interface Span {
   min: number;
@@ -18,13 +17,13 @@ export interface Span {
 
 // 拖出来的宽度是读者对自己这块屏幕的判断，不是布局的默认值 —— 所以它归本地
 // 存，不进内核配置：换台机器、换块屏幕，判断本来就不同。
-export const RAIL: Span = { min: 232, max: 440, def: 316, key: "rx-rail-w", css: "--rail-open", col: "--rail-w" };
+export const RAIL: Span = { min: 232, max: 440, def: 264, key: "rx-rail-w", css: "--rail-open", col: "--rail-w" };
 export const SIDE: Span = { min: 244, max: 540, def: 316, key: "rx-side-w", css: "--side-open", col: "--side-w" };
 // The workbench beside the conversation. Wider than the rail because what sits
 // in it is a page someone is reading, not a list of names.
-export const DOCK: Span = { min: 320, max: 1600, def: 560, key: "rx-dock-w", css: "--dock-open", col: "--dock-w", owner: ".pane" };
+export const DOCK: Span = { min: 360, max: 1600, def: 520, key: "rx-dock-w", css: "--dock-open", col: "--dock-w", owner: ".pane" };
 
-const STANDARD_DOCK_MAX = 880;
+const STANDARD_DOCK_MAX = 900;
 export const dockMax = (room: number) => Math.min(DOCK.max, Math.max(STANDARD_DOCK_MAX, room / 2));
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -145,25 +144,6 @@ export function Gutter({ edge, span, width, max = span.max, label, open, onWidth
     begin(e.currentTarget, e.pointerId, e.clientX);
   };
 
-  // A shut handle is only as tall as its grip, so the grip has to start the drag
-  // too; a press that never travels stays the click it always was.
-  const press = useRef<{ id: number; x0: number } | null>(null);
-  const grab = (e: ReactPointerEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    if (e.button !== 0) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    press.current = { id: e.pointerId, x0: e.clientX };
-  };
-  const travel = (e: ReactPointerEvent<HTMLButtonElement>) => {
-    const p = press.current;
-    if (!p || Math.abs(e.clientX - p.x0) <= 4) return;
-    press.current = null;
-    begin(e.currentTarget.parentElement as HTMLDivElement, p.id, p.x0);
-  };
-  const release = () => {
-    press.current = null;
-  };
-
   const toggle = () => onOpen(!open);
 
   const key = (e: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -219,30 +199,6 @@ export function Gutter({ edge, span, width, max = span.max, label, open, onWidth
       onKeyDown={key}
       data-action-keydown={rail ? "chrome.rail" : "browser.open"}
     >
-      {/* The one control for both directions, sitting where the hand already is.
-          Not a tab stop of its own — Enter on the separator does the same thing,
-          and a second stop per divider buys nothing. Two marks, cross-faded: the
-          divider's own gesture is dragging, so at rest it shows a handle, and
-          the arrow — what a click would do — arrives with the hand. */}
-      <button
-        className="grip"
-        tabIndex={-1}
-        aria-hidden="true"
-        title={open ? t("收起") : t("展开")}
-        onPointerDown={grab}
-        onPointerMove={travel}
-        onPointerUp={release}
-        onPointerCancel={release}
-        onClick={toggle}
-        data-action-click={rail ? "chrome.rail" : "browser.open"}
-        data-action-pointerdown={rail ? "chrome.rail" : "browser.open"}
-        data-action-pointermove={rail ? "chrome.rail" : "browser.open"}
-        data-action-pointerup={rail ? "chrome.rail" : "browser.open"}
-        data-action-pointercancel={rail ? "chrome.rail" : "browser.open"}
-      >
-        <i className="knurl" aria-hidden="true" />
-        <span className="dir" aria-hidden="true">{(edge === "l") === open ? "‹" : "›"}</span>
-      </button>
     </div>
   );
 }

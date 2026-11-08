@@ -56,6 +56,8 @@ export interface ModelEntry {
   modelAlias?: string;
   // The vendor slug of the preset this provider came from; absent when none declared it.
   mark?: string;
+  // The model as it reads with its entry's shared prefix left out; absent draws it as it is.
+  modelShort?: string;
   // The service's own vendor slug; differs from mark on a relay, whose models are others'.
   serviceMark?: string;
   kind?: string;
@@ -126,8 +128,6 @@ export interface RoleOverride {
 export interface CompactionSettings {
   // The stored value, not the resolved one: 0 means the default, negative
   // means off, and a caller that cannot tell those apart cannot offer them.
-  soft_limit_tokens: number;
-  default_soft_limit: number;
   ratio: number;
   // Zero when nobody declared a window, which is also what turns automatic
   // maintenance off entirely.

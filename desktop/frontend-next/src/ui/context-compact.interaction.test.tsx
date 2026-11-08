@@ -133,8 +133,8 @@ it("reports a transport refusal and restores the action for retry without queuei
 
 it("keeps the adjacent MCP management action working", async () => {
   const pane = await mount();
-  fireEvent.click(pane.card().getByRole("button", { name: "管理 MCP 与工具" }));
-  expect(pane.settings).toHaveBeenCalledExactlyOnceWith("ext");
+  fireEvent.click(pane.card().getByRole("button", { name: "管理 MCP" }));
+  expect(pane.settings).toHaveBeenCalledExactlyOnceWith("extensions");
 });
 
 it("holds both controls during HTTP admission and refuses a second confirmation", async () => {

@@ -1,11 +1,7 @@
 package agent
 
 import (
-	"reasonix/internal/runtime/completion"
 	"reasonix/internal/runtime/taskpolicy"
-	"reasonix/internal/runtime/verdict"
-
-	"reasonix/internal/safety/evidence"
 )
 
 // turnRuntime is the host state for exactly one Agent.Run. beginRunTurn builds
@@ -40,16 +36,10 @@ type turnRuntime struct {
 	// the ledger whenever a live view is needed, so one replay serves both the
 	// per-round observation and the end-of-turn record.
 	turnInput string
-	// completion is the report built as the turn ends; the host reads it while
-	// emitting TurnDone, before the next turn resets this state.
-	completion *completion.Report
 	// deliveryCriteriaEstablished may inherit an unfinished canonical task list
 	// on continuation, but the flag itself is recomputed every turn.
 	deliveryCriteriaEstablished bool
-	// baselineEval holds this turn's verdicts for captured criteria, keyed by
-	// criterion identity. Running one costs a build, so it happens once.
-	baselineEval        map[string]evidence.BaselineEvidence
-	deliveryScopeActive bool
+	deliveryScopeActive         bool
 	// readinessRecovered marks a run that started with evidence preserved from
 	// (or a pending recovery of) a prior readiness failure, so the final
 	// allowed audit can report Recovered=true.
@@ -68,18 +58,6 @@ type turnRuntime struct {
 	// jobSession scopes which background jobs count as this turn's writers.
 	jobSession string
 
-	// reviewWarnings are warn-level findings to surface in the final summary.
-	reviewWarnings []string
-	// lastReadiness is the verdict the turn last asked to stop under.
-	lastReadiness *finalReadinessCheck
-	// snapshot is the workspace as this turn found it; nil when unobserved.
-	snapshot *turnSnapshot
-	// outcome is the host-evidence verdict sealed for this turn; nil when no
-	// contract revision was in force to answer from.
-	outcome *verdict.Result
-	// uncountedCheckNoted marks that the model was told this turn why a command
-	// it ran was not a check; once a turn is enough to be learned.
-	uncountedCheckNoted bool
 	// watch counts rounds since this run last did something observable.
 	watch progressRun
 	// perseverationStrikes counts the cut-and-retry attempts this Run has spent

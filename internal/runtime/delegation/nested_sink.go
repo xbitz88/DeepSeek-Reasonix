@@ -1,8 +1,6 @@
 package delegation
 
 import (
-	"context"
-	"reasonix/internal/runtime/agent"
 	"strings"
 
 	"reasonix/internal/contract/event"
@@ -19,16 +17,6 @@ type nestedSink struct {
 	event.AuditForwarder
 	parentID string
 	parent   event.Sink
-}
-
-// RecordProtocolRecovery attributes a repair to the child it happened in. The
-// producers run inside the child's own loop and hold no id; this sink is the
-// layer that knows which run it is wrapping, as it already does for tools.
-func (s nestedSink) RecordProtocolRecovery(a event.ProtocolRecoveryAudit) {
-	if a.ChildID == "" {
-		a.ChildID = s.parentID
-	}
-	event.RecordProtocolRecovery(s.parent, a)
 }
 
 func (s nestedSink) Emit(e event.Event) {
@@ -58,17 +46,6 @@ func namespaceToolID(parentID, id string) string {
 		return id
 	}
 	return parentID + "/" + id
-}
-
-// subSink is the nesting sink for the child of the call in ctx: the parent
-// stream with tool ids re-parented under the parent call. Discard when there is
-// no parent stream — a headless run loop, or a direct Execute in a test.
-func subSink(ctx context.Context) event.Sink {
-	parentID, parent, _, ok := agent.CallContext(ctx)
-	if !ok || parent == nil {
-		return event.Discard
-	}
-	return subSinkFor(parentID, parent)
 }
 
 // subSinkFor builds the nesting sink from an already-captured parent ID + stream,

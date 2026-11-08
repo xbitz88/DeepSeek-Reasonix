@@ -42,14 +42,6 @@ export function saidBy(it: Item): string[] {
       return [it.m.title, it.m.description, it.m.body];
     case "worked":
       return [];
-    case "receipt":
-      return [
-        ...(it.r.changes ?? []).map((c) => c.path),
-        ...(it.r.verifications ?? []).map((v) => v.command),
-        ...(it.r.gaps ?? []).map((g) => `${g.kind} ${g.detail ?? ""}`),
-        ...(it.r.risks ?? []),
-        ...(it.r.unverified ?? []),
-      ];
     case "extension":
       return [it.ext.pluginId, it.ext.card?.title ?? "", it.ext.card?.text ?? "", it.ext.card?.markdown ?? "",
         it.ext.notification?.title ?? "", it.ext.notification?.body ?? "", it.ext.status?.label ?? ""];
@@ -87,6 +79,18 @@ function haystack(it: Item): string {
 export interface FindMode {
   regex?: boolean;
   caseSensitive?: boolean;
+  scope?: FindScope;
+}
+
+export type FindScope = "all" | "user" | "reply" | "tool";
+
+export function inScope(it: Item, scope: FindScope = "all"): boolean {
+  switch (scope) {
+    case "user": return it.t === "user";
+    case "reply": return it.t === "say";
+    case "tool": return it.t === "tool" || it.t === "reads";
+    default: return true;
+  }
 }
 
 /** One match: where it starts and how much it covers. */
@@ -162,14 +166,14 @@ export function afterMatch(finder: Finder, hay: string, m: Match): Match | null 
  *  then speaks for what was scanned. */
 const BUDGET_MS = 50;
 
-export function search(items: Item[], query: string, receipts = false, mode: FindMode = {}): Hit[] {
+export function search(items: Item[], query: string, mode: FindMode = {}): Hit[] {
   const finder = finderFor(query, mode);
   if (!finder) return [];
   const out: Hit[] = [];
   const deadline = Date.now() + BUDGET_MS;
   for (let row = 0; row < items.length; row++) {
-    if (items[row].t === "receipt" && !receipts) continue;
     if (Date.now() > deadline) break;
+    if (!inScope(items[row], mode.scope)) continue;
     const hay = finder.verbatim ? exactHaystack(items[row]) : haystack(items[row]);
     for (let m = finder.match(hay, 0); m; m = afterMatch(finder, hay, m)) {
       // An empty match (`^`, `a*`) covers nothing to paint; the painter skips

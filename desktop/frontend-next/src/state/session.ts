@@ -4,7 +4,7 @@ import { foldHistoryItems } from "./fold";
 import { measureInteractions } from "./interactions";
 import { foldExtension } from "./extension";
 import { surfaceHistory } from "../ui/surface/call";
-import type { CostCoverage, Receipt, Tool, WireEvent } from "../port/wire";
+import type { CostCoverage, Tool, WireEvent } from "../port/wire";
 import { noteTool, type Executions } from "./executions";
 import { estimateTokens, sample } from "../port/tokens";
 import type { HistoryMessage } from "../port/port";
@@ -20,13 +20,14 @@ import { splitProviderSearch } from "./providersearch";
 export type { CurrencyAmount, Item, Metrics, PlanStep, RememberedFact, RuntimeNotice, SessionState, TodoStatus, TurnTerminal, Waiting };
 export { currentStep, stepDone, stepLabel };
 import { askAnnounced, askEngaged, askFromCall, promptOpen, prompted, sealByReceipt } from "./prompts";
+import { stampPlan } from "./plan_card";
 import { nameTurnStart, othersSteer } from "./turn_start";
 import { appendText, foldMessage, sealSay } from "./say";
 import { nextId } from "./ids";
 import { worked } from "./worked";
 import { chipLabel, IDLE, RUNNING } from "./chip";
 import { foldStall } from "./stall";
-import { nameQueued, withoutPendingRow } from "./queued";
+import { nameQueued, QUEUE_HELD, withoutPendingRow } from "./queued";
 import { capToolOutput } from "./outputcap";
 import { dropTool, foldProgress, foldTool, isSubagentProgress, mergeReads, notePhase, noteRan } from "./fold";
 import { rebuild } from "./rebuild";
@@ -36,11 +37,11 @@ export { quoteAmount };
 // doing is what the status chip prints. These two values are also read back by
 // the reducer, so they get a name: a comparison against a sentence is one copy
 // pass away from never matching again, and nothing fails when it stops.
-const WAITING_WORKSPACE = "等待工作区";
+const WAITING_WORKSPACE = "app.waiting_for_the_workspace";
 // What the turn is doing between a tool finishing and the model's next packet.
 // The chip used to keep printing the tool that had already returned, so the
 // one stretch nothing is on screen for looked like the one stretch it hung.
-const WAITING_MODEL = "等待模型回复";
+const WAITING_MODEL = "composer.waiting_for_the_model";
 
 export const initialState: SessionState = {
   interactionIDs: { asked: [], answered: [] },
@@ -86,7 +87,7 @@ export const localId = nextId;
 //
 // A backgrounded command is not caught by this: it answers with a result the
 // moment it is launched, so its card is already settled when the turn ends.
-const NO_REPORT = "这一步没有回报结果就随本轮结束了";
+const NO_REPORT = "app.this_step_ended_with_the";
 
 // A call still on its streaming placeholder is the other case, and the opposite
 // claim: no arguments ever reached it, so it never ran and nothing on disk
@@ -113,8 +114,8 @@ function sealTurn(items: Item[], err?: string): Item[] {
   if (stillborn > 0) {
     const text = plural(
       stillborn,
-      "另有 1 个调用尚未开始，未修改任何文件",
-      "另有 {n} 个调用尚未开始，均未修改任何文件",
+      "app.n_1_call_never_got_started",
+      "app.n_calls_never_got_started",
     );
     sealed.push({ t: "notice", id: nextId(), level: "info", text });
   }
@@ -225,6 +226,7 @@ export type SessionEvent =
   | { kind: "__decided"; id: string; verdict?: string; answers?: string[][]; values?: Record<string, unknown> }
   | { kind: "__forgot"; id: string }
   | { kind: "__runtime_seen"; id: string }
+  | { kind: "__queue_resumed" }
   // The transcript has drawn these cards, so their one entrance is spent.
   // Render says when, not the animation: a card can leave the document before
   // its animation ends, and reduced motion runs no animation at all.
@@ -242,6 +244,7 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
     return left.length === s.entranceOwed.length ? s : { ...s, entranceOwed: left };
   }
   if (ev.kind === "__runtime_seen") return { ...s, runtime: s.runtime.filter((n) => n.id !== ev.id) };
+  if (ev.kind === "__queue_resumed") return s.runtime.some((n) => n.code === QUEUE_HELD) ? { ...s, runtime: s.runtime.filter((n) => n.code !== QUEUE_HELD) } : s;
   if (ev.kind === "rewind_changed") return { ...s, rewindMoved: s.rewindMoved + 1 };
   if (ev.kind === "inbox_changed") return { ...s, queueMoved: s.queueMoved + 1 };
   if (ev.kind === "browser_tabs_changed") return { ...s, browserTabsMoved: s.browserTabsMoved + 1 };
@@ -312,12 +315,12 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
   if (ev.kind === "__history_prepend") return prependHistory(s, ev);
   if (ev.kind === "__restore") {
     const merged = rebuild(s, ev);
-    return ev.plan ? { ...merged, plan: livePlan(ev.plan) } : merged;
+    return ev.plan ? { ...merged, plan: livePlan(ev.plan), items: stampPlan(merged.items, ev.plan) } : merged;
   }
   // The kernel's canonical task list, asked for rather than re-derived: the
   // advances are not todo_write calls, and the refused writes are.
   if (ev.kind === "__todos") {
-    return { ...s, plan: livePlan(ev.plan) };
+    return { ...s, plan: livePlan(ev.plan), items: stampPlan(s.items, ev.plan) };
   }
   // The session's own running totals, read back from the kernel rather than
   // restarted here: a count that begins at zero makes the next request the whole
@@ -372,12 +375,12 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
       // twice: no seal — calls still run, a prompt is still owed — but naming
       // still runs, because the row may have been sent between the two.
       if (s.running && ev.msgIndex !== undefined && ev.msgIndex === s.turnMsgIndex) return nameTurnStart(s, ev);
-      return nameTurnStart({ ...s, metrics: { ...s.metrics, turn: [] }, running: true, runSince: Date.now(), doing: "运行中", terminal: null, outLive: 0, turnModel: ev.modelRef || s.turnModel, waiting: { ttftSince: Date.now() }, turnMsgIndex: ev.msgIndex ?? s.turnMsgIndex, items: sealTurn(sealSay(s.items, true)) }, ev);
+      return nameTurnStart({ ...s, metrics: { ...s.metrics, turn: [] }, running: true, runSince: Date.now(), doing: "common.running", terminal: null, outLive: 0, turnModel: ev.modelRef || s.turnModel, waiting: { ttftSince: Date.now() }, turnMsgIndex: ev.msgIndex ?? s.turnMsgIndex, items: sealTurn(sealSay(s.items, true)) }, ev);
 
     case "reasoning":
       return {
         ...s,
-        doing: "思考中",
+        doing: "composer.thinking",
         outWindow: sample(s.outWindow, estimateTokens(ev.text ?? ""), Date.now()),
         outLive: s.outLive + estimateTokens(ev.text ?? ""),
         items: appendText(s.items, ev.text ?? "", "reasoning", ev.source, ev.modelRef || s.turnModel),
@@ -386,7 +389,7 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
     case "text":
       return {
         ...s,
-        doing: "正在回答",
+        doing: "composer.answering",
         outWindow: sample(s.outWindow, estimateTokens(ev.text ?? ""), Date.now()),
         outLive: s.outLive + estimateTokens(ev.text ?? ""),
         items: appendText(s.items, ev.text ?? "", "text", ev.source, ev.modelRef || s.turnModel),
@@ -434,7 +437,7 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
         executions,
         doing: handedBack ? WAITING_MODEL : s.doing,
         waiting: handedBack ? { ...s.waiting, ttftSince: Date.now() } : s.waiting,
-        items: mergeReads(foldTool(s.items, capToolOutput(ev.tool), false)),
+        items: stampPlan(mergeReads(foldTool(s.items, capToolOutput(ev.tool), false)), plan !== s.plan ? plan : null),
       };
     }
 
@@ -457,7 +460,7 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
     }
 
     case "approval_request":
-      return ev.approval ? prompted(s, "等待批准", { t: "approval", id: nextId(), a: ev.approval }) : s;
+      return ev.approval ? prompted(s, "app.waiting_for_approval", { t: "approval", id: nextId(), a: ev.approval }) : s;
 
     case "ask_request":
       return ev.ask ? askAnnounced(s, ev.ask) : s;
@@ -614,10 +617,10 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
         ...s,
         running: false,
         terminal: turnTerminal(ev),
-        doing: ev.outcome === "no_progress" ? "已暂停" : ev.cancelled ? "已取消" : ev.err ? "已中断" : "已完成",
+        doing: ev.outcome === "no_progress" ? "app.held" : ev.cancelled ? "common.cancelled" : ev.err ? "common.interrupted" : "common.done_2",
         waiting: {},
         plan: livePlan(s.plan),
-        items: withReceipt([...sealTurn(sealSay(s.items, true), ev.outcome === "no_progress" || ev.cancelled ? undefined : ev.err), ...worked(ev.workDurationMs, ev.workStartedAt)], ev.receipt),
+        items: [...sealTurn(sealSay(s.items, true, ev.cancelled ? "stopped" : ev.err && ev.outcome !== "no_progress" ? "failed" : undefined), ev.outcome === "no_progress" || ev.cancelled ? undefined : ev.err), ...worked(ev.workDurationMs, ev.workStartedAt)],
       };
 
     default:
@@ -636,14 +639,6 @@ function turnTerminal(ev: WireEvent): TurnTerminal {
   if (ev.err) return { kind: "failed", err: ev.err };
   if (ev.outcome) return { kind: "incomplete", outcome: ev.outcome };
   return { kind: "completed" };
-}
-
-// withReceipt appends the turn's completion record when the kernel says it has
-// something to say. Whether the card is drawn is the reader's choice, made at
-// render time, so the record stays in the transcript either way.
-function withReceipt(items: Item[], r?: Receipt): Item[] {
-  if (!r?.saysSomething) return items;
-  return [...items, { t: "receipt", id: nextId(), r }];
 }
 
 // The kernel wraps each user turn in control-plane blocks. They are

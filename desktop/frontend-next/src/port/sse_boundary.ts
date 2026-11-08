@@ -3,8 +3,8 @@ import type { PresentFilesSettings } from "./boundary";
 import type { AgentComposition, AgentPresetVersion, AgentPresetCatalog, CompositionSummary } from "./composition";
 import type { ScheduleBoard, ScheduleDraft, SchedulePreview, ScheduleResultView, ScheduleView } from "./schedule";
 import type { PersonaDraft, PersonaSettings } from "./boundary";
-import type { Adjudications, BrowserToolsSettings, SubagentClaimsSettings, SubagentSteerSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, PermissionLists, PermissionRules, SandboxSettings } from "./port";
-import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, DisplayCurrencyMode, DisplayCurrencySettings, ProgressWatchSettings, WorkspaceRoots, ReceiptSettings } from "./boundary";
+import type { Adjudications, BrowserToolsSettings, SubagentClaimsSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, PermissionLists, PermissionRules, SandboxSettings } from "./port";
+import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, ChangedSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, DisplayCurrencyMode, DisplayCurrencySettings, ProgressWatchSettings, WorkspaceRoots } from "./boundary";
 
 // Where the agent may reach: the permission rules a call is matched against and
 // the sandbox the shell runs in.
@@ -131,12 +131,6 @@ export class SseBoundary extends SseShell {
   saveSubagentClaims(optimistic: boolean) {
     return this.post0<SubagentClaimsSettings>("/subagent-claims", { optimistic });
   }
-  subagentSteerSettings() {
-    return this.get<SubagentSteerSettings>("/subagent-steer-limits");
-  }
-  saveSubagentSteerSettings(maxBytes: number, perMinute: number) {
-    return this.post0<SubagentSteerSettings>("/subagent-steer-limits", { maxBytes, perMinute });
-  }
   displayCurrency() {
     return this.get<DisplayCurrencySettings>("/display-currency");
   }
@@ -154,6 +148,9 @@ export class SseBoundary extends SseShell {
   }
   saveFeedbackLevelNotices(enabled: boolean) {
     return this.post0<FeedbackLevelNotices>("/feedback-level-notices", { enabled });
+  }
+  changedSettings() {
+    return this.get<ChangedSettings>("/settings-changed");
   }
   foldWorkSettings() {
     return this.get<FoldWorkSettings>("/fold-work-settings");
@@ -211,12 +208,6 @@ export class SseBoundary extends SseShell {
   }
   saveSessionRefSettings(tokens: number) {
     return this.post0<SessionRefSettings>("/session-ref-settings", { tokens });
-  }
-  receiptSettings() {
-    return this.get<ReceiptSettings>("/receipt-settings");
-  }
-  saveReceiptSettings(show: boolean) {
-    return this.post0<ReceiptSettings>("/receipt-settings", { show });
   }
   configProblem() {
     return this.get<ConfigProblem | null>("/config/problem");

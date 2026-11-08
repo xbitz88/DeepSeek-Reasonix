@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"reasonix/internal/base/i18n"
+	"reasonix/internal/runtime/agent"
 	"reasonix/internal/runtime/goaleval"
 )
 
@@ -37,7 +38,7 @@ func (c *Controller) SetGoal(goal string) {
 // atomically.
 func (c *Controller) SetGoalDurable(goal string) error {
 	snapshot := c.goals.capture()
-	path, data, persist := c.goals.set(goal, budgetClassForLegacyMode(goal, GoalResearchAuto), c.frozenVerificationContract(), c.goalTodos())
+	path, data, persist := c.goals.set(goal, budgetClassForLegacyMode(goal, GoalResearchAuto), c.goalTodos())
 	if persist {
 		if err := c.goals.writeStateErr(path, data); err != nil {
 			c.goals.restore(snapshot)
@@ -48,7 +49,7 @@ func (c *Controller) SetGoalDurable(goal string) error {
 }
 
 func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {
-	path, data, ok := c.goals.set(goal, budgetClassForLegacyMode(goal, researchMode), c.frozenVerificationContract(), c.goalTodos())
+	path, data, ok := c.goals.set(goal, budgetClassForLegacyMode(goal, researchMode), c.goalTodos())
 	c.persistGoalState(path, data, ok)
 }
 
@@ -64,8 +65,12 @@ func (c *Controller) ResumeGoal() bool {
 	if c.executor != nil {
 		if spentBudget {
 			c.executor.ResetTaskBudget()
+			if roles, ok := c.runner.(interface{ PlannerAgent() *agent.Agent }); ok {
+				if planner := roles.PlannerAgent(); planner != nil {
+					planner.ResetTaskBudget()
+				}
+			}
 		}
-		c.executor.RestoreDeliveryCheckpoint(c.goals.deliveryState())
 	}
 	return true
 }
@@ -107,24 +112,10 @@ func (c *Controller) goalEvaluatorEvidence() goaleval.GoalEvidence {
 				incomplete++
 			}
 		}
-		rr := c.executor.ReadinessResult()
-		readinessText := "ready"
-		if rr.Reason != "" {
-			readinessText = rr.Reason
-		}
-		ev.TodoSummary = fmt.Sprintf("todos: %d total, %d incomplete; delivery readiness: %s", len(todos), incomplete, readinessText)
+		ev.TodoSummary = fmt.Sprintf("todos: %d total, %d incomplete", len(todos), incomplete)
 	}
 	ev.TurnStatus = c.goals.budgetStatusText()
 	return ev
-}
-
-func (c *Controller) persistGoalDeliveryCheckpoint() {
-	if c.executor == nil {
-		return
-	}
-	checkpoint := c.executor.DeliveryCheckpoint()
-	path, data, ok := c.goals.setDeliveryCheckpoint(checkpoint, c.goalTodos())
-	c.persistGoalState(path, data, ok)
 }
 
 func (c *Controller) ClearGoal() {

@@ -28,7 +28,15 @@ const QUOTE_CAP = 20000;
 // A question asked beside the session: read-only, kept only for as long as this
 // panel is open, and never part of the main conversation. The kernel opens the
 // conversation at the first question and drops it when the panel closes.
-export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => void }) {
+export function SidePanel({
+  port,
+  onClose,
+  onQuote,
+}: {
+  port: AgentPort;
+  onClose: () => void;
+  onQuote?: (text: string) => void;
+}) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [quotes, setQuotes] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
@@ -63,7 +71,10 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
       const bounds = host.getBoundingClientRect();
       const scale = bounds.width / host.offsetWidth || 1;
       const room = (bounds.top - pane.getBoundingClientRect().top) / scale - 18;
-      el.style.setProperty("--side-room", `${Math.max(0, Math.min(520, Math.floor(room)))}px`);
+      el.style.setProperty(
+        "--side-room",
+        `${Math.max(0, Math.min(520, Math.floor(room)))}px`,
+      );
     };
     fit();
     const watch = new ResizeObserver(fit);
@@ -79,50 +90,81 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
     const remember = () => {
       const sel = window.getSelection();
       const text = sel?.toString().trim() ?? "";
-      if (text && !(sel?.anchorNode && panel.current?.contains(sel.anchorNode))) lastSelected.current = text;
+      if (text && !(sel?.anchorNode && panel.current?.contains(sel.anchorNode)))
+        lastSelected.current = text;
     };
-    return listenAction(document, "selectionchange", { action: "side.quote", listener: remember });
+    return listenAction(document, "selectionchange", {
+      action: "side.quote",
+      listener: remember,
+    });
   }, []);
 
   const quoteSelection = () => {
     const sel = window.getSelection();
     const live = sel?.toString().trim() ?? "";
-    const text = live && !(sel?.anchorNode && panel.current?.contains(sel.anchorNode)) ? live : lastSelected.current;
+    const text =
+      live && !(sel?.anchorNode && panel.current?.contains(sel.anchorNode))
+        ? live
+        : lastSelected.current;
     if (!text) {
-      setError(t("先在对话里选中一段文字"));
+      setError(t("composer.select_some_text_in_the"));
       return;
     }
     lastSelected.current = "";
     setError("");
-    setQuotes((all) => (all.includes(text) ? all : [...all, text.slice(0, QUOTE_CAP)]));
+    setQuotes((all) =>
+      all.includes(text) ? all : [...all, text.slice(0, QUOTE_CAP)],
+    );
   };
 
   const send = async () => {
     const question = draft.trim();
     if (!question || busy) return;
     const sent = quotes;
-    setPending({ question, quotes: sent, text: "", phase: "waiting", since: Date.now() });
+    setPending({
+      question,
+      quotes: sent,
+      text: "",
+      phase: "waiting",
+      since: Date.now(),
+    });
     setError("");
+    // What was asked leaves the box the moment it is sent, and comes back only if the ask fails.
+    setDraft("");
+    setQuotes([]);
     try {
-      opened.current ??= port.openSide().then((held) => { id.current = held; return held; });
+      opened.current ??= port.openSide().then((held) => {
+        id.current = held;
+        return held;
+      });
       const held = await opened.current;
       if (!live.current) return;
       const answer = await port.askSide(held, question, sent, (progress) => {
         if (!live.current) return;
-        setPending((current) => current && {
-          ...current,
-          text: progress.kind === "text" ? current.text + (progress.text ?? "") : current.text,
-          phase: progress.kind,
-          tool: progress.tool,
-        });
+        setPending(
+          (current) =>
+            current && {
+              ...current,
+              text:
+                progress.kind === "text"
+                  ? current.text + (progress.text ?? "")
+                  : current.text,
+              phase: progress.kind,
+              tool: progress.tool,
+            },
+        );
       });
       if (!live.current) return;
-      setTurns((all) => [...all, { role: "me", text: question, quotes: sent }, { role: "side", text: answer }]);
+      setTurns((all) => [
+        ...all,
+        { role: "me", text: question, quotes: sent },
+        { role: "side", text: answer },
+      ]);
       setPending(null);
-      setDraft("");
-      setQuotes([]);
     } catch (e) {
       if (!live.current) return;
+      setDraft((now) => now || question);
+      setQuotes((now) => (now.length ? now : sent));
       opened.current = id.current ? opened.current : null;
       setError(reason(e));
       setPending((current) => current && { ...current, phase: "failed" });
@@ -143,7 +185,7 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
       data-collapsed={collapsed || undefined}
       ref={panel}
       role="complementary"
-      aria-label={t("辅助会话")}
+      aria-label={t("composer.side_question")}
       data-action-keydown="side.close"
       onKeyDown={(e) => {
         if (e.key !== "Escape" || e.nativeEvent.isComposing) return;
@@ -152,72 +194,191 @@ export function SidePanel({ port, onClose }: { port: AgentPort; onClose: () => v
       }}
     >
       <header>
-        <span><b>{t("辅助会话")}</b><small>{t("只读 · 不写入主会话 · 关闭即丢")}</small></span>
+        <StudioIcon name="chat" />
+        <b>{t("composer.side_question")}</b>
+        {(
+          [
+            "composer.side_badge_read_only",
+            "composer.side_badge_not_main",
+            "composer.side_badge_gone",
+          ] as const
+        ).map((key) => (
+          <span className="sidebadge" key={key}>
+            {t(key)}
+          </span>
+        ))}
         <div className="sideactions">
-          <button type="button" className="sidecollapse" data-action="side.collapse" aria-expanded={!collapsed} aria-controls={contentId}
-            aria-label={t(collapsed ? "展开辅助会话" : "收起辅助会话")} title={t(collapsed ? "展开辅助会话" : "收起辅助会话")}
-            onClick={() => setCollapsed((held) => !held)}><StudioIcon name="down" /></button>
-        <button type="button" data-action="side.close" aria-label={t("关闭辅助会话")} title={t("关闭辅助会话")} onClick={close}>×</button>
+          <button
+            type="button"
+            className="sidecollapse"
+            data-action="side.collapse"
+            aria-expanded={!collapsed}
+            aria-controls={contentId}
+            aria-label={t(
+              collapsed
+                ? "composer.expand_the_side_question"
+                : "composer.collapse_the_side_question",
+            )}
+            title={t(
+              collapsed
+                ? "composer.expand_the_side_question"
+                : "composer.collapse_the_side_question",
+            )}
+            onClick={() => setCollapsed((held) => !held)}
+          >
+            <StudioIcon name="down" />
+          </button>
+          <button
+            type="button"
+            data-action="side.close"
+            aria-label={t("composer.close_the_side_question")}
+            title={t("composer.close_the_side_question")}
+            onClick={close}
+          >
+            <StudioIcon name="close" />
+          </button>
         </div>
       </header>
       <div className="sidecontent" id={contentId} hidden={collapsed}>
-      <div className="sidebody" aria-live="polite">
-        {turns.length === 0 && !pending && <p className="sidehint">{t("在这里问关于这段代码、这个报错的问题：它只能读文件和搜索，不会改动任何东西。")}</p>}
-        {turns.map((turn, i) => (
-          <div key={i} className="sideturn" data-role={turn.role}>
-            {turn.quotes?.map((q) => <blockquote key={q}>{q}</blockquote>)}
-            {turn.role === "side" ? <Markdown text={turn.text} images={false} /> : <p>{turn.text}</p>}
-          </div>
-        ))}
-        {pending && (
-          <>
-            <div className="sideturn" data-role="me">
-              {pending.quotes.map((quote) => <blockquote key={quote}>{quote}</blockquote>)}
-              <p>{pending.question}</p>
+        <div className="sidebody" aria-live="polite">
+          {turns.length === 0 && !pending && (
+            <p className="sidehint sideempty">
+              {t("composer.ask_about_this_code_or")}
+            </p>
+          )}
+          {turns.map((turn, i) => (
+            <div key={i} className="sideturn" data-role={turn.role}>
+              {turn.quotes?.map((q) => (
+                <blockquote key={q}>{q}</blockquote>
+              ))}
+              {turn.role === "side" ? (
+                <Markdown text={turn.text} images={false} />
+              ) : (
+                <p>{turn.text}</p>
+              )}
+              {turn.role === "side" && onQuote && (
+                <button
+                  type="button"
+                  className="sidetomain"
+                  data-action="side.quote-answer"
+                  onClick={() =>
+                    onQuote(
+                      `${turn.text
+                        .split("\n")
+                        .map((line) => `> ${line}`)
+                        .join("\n")}\n`,
+                    )
+                  }
+                >
+                  <StudioIcon name="quote" />
+                  {t("composer.side_quote_to_main")}
+                </button>
+              )}
             </div>
-            {pending.text && <div className="sideturn" data-role="side">
-              <Markdown text={pending.text} images={false} />
-              {pending.phase === "failed" && <small className="sidehint">{t("已中断")}</small>}
-            </div>}
-          </>
-        )}
-      {error && <p className="sideerr" role="alert">{error}</p>}
-      {quotes.length > 0 && !busy && (
-        <ul className="sidequotes">
-          {quotes.map((q, i) => (
-            <li key={q}>
-              <span>{q}</span>
-              <button type="button" data-action="side.unquote" aria-label={t("移除引用 {n}", { n: i + 1 })} onClick={() => setQuotes((all) => all.filter((x) => x !== q))}>×</button>
-            </li>
           ))}
-        </ul>
-      )}
-      </div>
-      {busy && pending && <p className="sidehint sideprogress" role="status">
-        {pending.phase === "text" ? t("正在回答") : pending.phase === "thinking" ? t("思考中") : pending.phase === "tool" ? t("正在处理…") : t("等待模型回复")}
-        {pending.tool && <> · {pending.tool}</>}
-        {" · "}<RunClock since={pending.since} />
-      </p>}
-      <footer>
-        <button type="button" className="sidequote" data-action="side.quote" disabled={busy} onClick={quoteSelection}>{t("引用选中内容")}</button>
-        <textarea
-          aria-label={t("向辅助会话提问")}
-          value={draft}
-          rows={2}
-          readOnly={busy}
-          data-action-change="side.draft"
-          data-action-keydown="side.send"
-          placeholder={t("提问…")}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <button type="button" className="sidesend" data-action="side.send" disabled={busy || !draft.trim()} onClick={() => void send()}>{t("发送")}</button>
-      </footer>
+          {pending && (
+            <>
+              <div className="sideturn" data-role="me">
+                {pending.quotes.map((quote) => (
+                  <blockquote key={quote}>{quote}</blockquote>
+                ))}
+                <p>{pending.question}</p>
+              </div>
+              {pending.text && (
+                <div className="sideturn" data-role="side">
+                  <Markdown text={pending.text} images={false} />
+                  {pending.phase === "failed" && (
+                    <small className="sidehint">
+                      {t("common.interrupted")}
+                    </small>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+          {error && (
+            <p className="sideerr" role="alert">
+              {error}
+            </p>
+          )}
+          {quotes.length > 0 && !busy && (
+            <ul className="sidequotes">
+              {quotes.map((q, i) => (
+                <li key={q}>
+                  <em>{t("composer.side_quote_label")}</em>
+                  <span>{q}</span>
+                  <button
+                    type="button"
+                    data-action="side.unquote"
+                    aria-label={t("composer.remove_quote_n", { n: i + 1 })}
+                    onClick={() =>
+                      setQuotes((all) => all.filter((x) => x !== q))
+                    }
+                  >
+                    <StudioIcon name="close" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {busy && pending && (
+          <p className="sidehint sideprogress" role="status">
+            {pending.phase === "text"
+              ? t("composer.answering")
+              : pending.phase === "thinking"
+                ? t("composer.thinking")
+                : pending.phase === "tool"
+                  ? t("common.working")
+                  : t("composer.waiting_for_the_model")}
+            {pending.tool && <> · {pending.tool}</>}
+            {" · "}
+            <RunClock since={pending.since} />
+          </p>
+        )}
+        <footer>
+          {quotes.length === 0 && (
+            <p className="sidenote">{t("composer.side_select_first")}</p>
+          )}
+          <button
+            type="button"
+            className="sidequote"
+            data-action="side.quote"
+            disabled={busy}
+            onClick={quoteSelection}
+          >
+            {t("common.quote_selected_text")}
+          </button>
+          <textarea
+            aria-label={t("composer.ask_the_side_question")}
+            value={draft}
+            rows={1}
+            readOnly={busy}
+            data-action-change="side.draft"
+            data-action-keydown="side.send"
+            placeholder={t("composer.ask")}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing
+              ) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="sidesend"
+            data-action="side.send"
+            disabled={busy || !draft.trim()}
+            onClick={() => void send()}
+          >
+            {t("common.send")}
+          </button>
+        </footer>
       </div>
     </aside>
   );

@@ -34,7 +34,6 @@ type roleWiring struct {
 	sink              event.Sink
 	gate              *control.SharedHeadlessGate
 	reg               *tool.Registry
-	keep              agent.KeepPolicy
 	checkTargetAccess tool.TargetAccessCheck
 	hooks             *hook.Runner // each role fires it under a session of its own
 }
@@ -72,23 +71,18 @@ func (w roleWiring) planner(opts Options, executor *agent.Agent, executorModel, 
 		plannerTools = agent.PlannerToolRegistry(w.reg)
 	}
 	plannerOpts := agent.Options{
-		MaxSteps:                     0,
-		TaskBudget:                   taskBudgetFromConfig(w.cfg),
-		Gate:                         w.gate,
-		CheckTargetAccess:            w.checkTargetAccess,
-		Hooks:                        w.hooks.ForRole("planner"),
-		ModelRef:                     modelRefFromEntry(pe),
-		ContextWindow:                pe.ContextWindow,
-		CompactRatio:                 w.cfg.Agent.CompactRatio,
-		ContextEditing:               w.cfg.Agent.ContextEditing,
-		RecentKeep:                   w.cfg.Agent.RecentKeep,
-		CompactionBudgets:            compactionBudgets(w.cfg),
-		ArchiveDir:                   w.roots.ArchiveDir(),
-		KeepPolicy:                   w.keep,
-		ReasoningLanguage:            w.cfg.ReasoningLanguage(),
-		CapabilityLedger:             plannerLedger,
-		CapabilityAudit:              plannerAudit,
-		MissingReasoningWarnStateDir: w.roots.MissingReasoningWarnStateDir(),
+		MaxSteps:          0,
+		Gate:              w.gate,
+		CheckTargetAccess: w.checkTargetAccess,
+		Hooks:             w.hooks.ForRole("planner"),
+		ModelRef:          modelRefFromEntry(pe),
+		ContextWindow:     pe.ContextWindow,
+		CompactRatio:      w.cfg.Agent.CompactRatio,
+		CompactionBudgets: compactionBudgets(w.cfg),
+		ArchiveDir:        w.roots.ArchiveDir(),
+		ReasoningLanguage: w.cfg.ReasoningLanguage(),
+		CapabilityLedger:  plannerLedger,
+		CapabilityAudit:   plannerAudit,
 	}
 	runner := coordinator.NewCoordinatorWithPlannerPolicy(plannerProv, plannerSess, pe.Price, plannerTools, plannerOpts, executor, w.cfg.Agent.Temperature, w.sink, control.NewPlannerPolicy())
 	return runner, executorModel + " + planner " + pe.Model, nil

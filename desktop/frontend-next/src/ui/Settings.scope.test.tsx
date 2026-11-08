@@ -6,7 +6,7 @@ import "./testkit";
 import { Settings } from "./Settings";
 import { MockPort } from "../port/mock";
 import { MockHub } from "../port/mock_hub";
-import type { CapabilityScope, SkillCatalog } from "../port/port";
+import type { AgentPort, CapabilityScope, SkillCatalog } from "../port/port";
 
 afterEach(cleanup);
 
@@ -29,10 +29,33 @@ it("keeps the selected project's skills when the previous read finishes late", a
     accountUnread="" reloadAccount={() => {}}
   />);
 
+  await userEvent.click(await screen.findByRole("tab", { name: /权限与安全/ }));
   await userEvent.click(await screen.findByRole("button", { name: /Project A/ }));
   await userEvent.click(screen.getByRole("option", { name: /Project B/ }));
+  await userEvent.click(screen.getByRole("tab", { name: /^扩展/ }));
   await screen.findByText("only-b");
   await act(async () => finishA({ implicit: true, skills: [{ name: "only-a", enabled: true }] }));
   expect(screen.getByText("only-b")).toBeTruthy();
   expect(screen.queryByText("only-a")).toBeNull();
+});
+
+it("switches the project from the extension page itself, without a trip to another page", async () => {
+  const scopes = [
+    { root: "/projects/a", name: "Project A", key: "a", repo: true, overrides: 0, current: true },
+    { root: "/projects/b", name: "Project B", key: "b", repo: true, overrides: 0 },
+  ];
+  const port = new MockPort() as unknown as AgentPort;
+  port.capabilityScopes = vi.fn(async () => scopes) as never;
+  port.mcp = vi.fn(async (root?: string) => ({ servers: [], scope: root === scopes[1].root ? scopes[1] : scopes[0] })) as never;
+  port.skills = vi.fn(async (root?: string) => ({ implicit: true, skills: [{ name: root === scopes[1].root ? "only-b" : "only-a", enabled: true }] })) as never;
+  render(<Settings
+    hub={new MockHub()} onError={() => {}} port={port} status={null} theme="" reloadThemes={() => {}}
+    onTheme={() => {}} contrast="" onContrast={() => {}} weight="" onWeight={() => {}}
+    look={{}} onLook={() => {}} onClose={() => {}} onChanged={() => {}} at="ext" account={null}
+    accountUnread="" reloadAccount={() => {}}
+  />);
+  await userEvent.click(await screen.findByRole("button", { name: /Project A/ }));
+  await userEvent.click(screen.getByRole("option", { name: /Project B/ }));
+  await screen.findByText("only-b");
+  expect(document.querySelector(".scopeaway")?.textContent).toContain("Project B");
 });

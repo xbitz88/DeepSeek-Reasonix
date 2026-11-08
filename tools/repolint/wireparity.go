@@ -30,6 +30,7 @@ const (
 	tsProviderFile  = "desktop/frontend-next/src/port/provider.ts"
 	tsFeedbackFile  = "desktop/frontend-next/src/port/feedback.ts"
 	tsWorkspaceFile = "desktop/frontend-next/src/port/workspace.ts"
+	tsTerminalFile  = "desktop/frontend-next/src/port/terminal.ts"
 	tsLookFile      = "desktop/frontend-next/src/port/look.ts"
 	tsHubFile       = "desktop/frontend-next/src/port/hub.ts"
 	tsMuxFile       = "desktop/frontend-next/src/port/mux.ts"
@@ -45,9 +46,13 @@ const tuiInboxFile = "internal/frontend/tui/client_inbox.go"
 // mirroredWireTypes are the Go types the desktop keeps a second, hand-written
 // copy of: the graph, whose consumers all fold the same deltas, and the sandbox
 // editor, which draws a security posture a field it cannot read would get
-// wrong. Declared and not inferred, for the reason the sensitive paths are: no
-// spelling tells a mirrored contract from a struct with json tags.
-var mirroredWireTypes = []wireMirror{
+// wrong. Declared and not inferred: no spelling tells a mirrored contract from
+// a struct with json tags. Two files only so neither outgrows the line ceiling.
+var mirroredWireTypes = slices.Concat(mirroredWireTypesHead, mirroredWireTypesTail)
+
+// mirroredWireTypesHead is the table's first half; wireparity_table.go holds
+// the rest.
+var mirroredWireTypesHead = []wireMirror{
 	{"internal/frontend/serve/workspace_files.go", "workspaceFile", tsWorkspaceFile, "WorkspaceFile"},
 	{"internal/base/workspacefile/file.go", "Ref", tsWorkspaceFile, "FileRef"},
 	{"internal/base/workspacefile/file.go", "Info", tsWorkspaceFile, "PreviewInfo"},
@@ -117,6 +122,7 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/frontend/serve/subagents.go", "subagentRunView", tsSubagentFile, "SubagentRun"},
 	{"internal/frontend/serve/subagents.go", "subagentTranscriptView", tsSubagentFile, "SubagentTranscript"},
 	{"internal/frontend/serve/session_usage.go", "SourceUsage", tsSessionFile, "SourceUsage"},
+	{"internal/frontend/serve/session_usage.go", "ColdStartUsage", tsSessionFile, "ColdStartUsage"},
 	// The agent's tabs. The target id is what the window draws a view by, so a
 	// tab the page cannot read one for is a tab it cannot show.
 	{"internal/platform/browser/session.go", "TabInfo", tsSessionFile, "BrowserTab"},
@@ -203,10 +209,10 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/session/control/schedules.go", "SchedulePendingView", tsScheduleFile, "SchedulePendingView"},
 	{"internal/session/control/schedules.go", "ScheduleResultView", tsScheduleFile, "ScheduleResultView"},
 	{"internal/session/control/fold_work_settings.go", "FoldWorkSettings", tsBoundaryFile, "FoldWorkSettings"},
+	{"internal/session/control/changed_settings.go", "ChangedSettings", tsBoundaryFile, "ChangedSettings"},
 	{"internal/session/control/ask_timeout.go", "AskTimeoutSettings", tsBoundaryFile, "AskTimeoutSettings"},
 	{"internal/session/control/session_ref_settings.go", "SessionRefSettings", tsBoundaryFile, "SessionRefSettings"},
 	{"internal/session/control/auto_archive.go", "AutoArchiveSettings", tsBoundaryFile, "AutoArchiveSettings"},
-	{"internal/session/control/receipt_settings.go", "ReceiptSettings", tsBoundaryFile, "ReceiptSettings"},
 	{"internal/frontend/serve/notifications.go", "NotifyPrefs", tsPortFile, "NotifyPrefs"},
 	{"internal/frontend/serve/notifications.go", "PhoneNotifyPrefs", tsPortFile, "PhoneNotifyPrefs"},
 	{"internal/frontend/serve/share_phones.go", "PhoneView", tsShareFile, "PhoneView"},
@@ -266,6 +272,8 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/frontend/serve/providers.go", "protocolView", tsProviderFile, "Protocol"},
 	{"internal/frontend/serve/provider_presets.go", "providerPresetView", tsProviderFile, "ProviderPreset"},
 	{"internal/frontend/serve/provider_check.go", "providerCheck", tsProviderFile, "ProviderCheck"},
+	{"internal/model/providerhealth/check.go", "Reading", tsProviderFile, "ProviderHealth"},
+	{"internal/session/control/provider_health.go", "ProviderHealthSettings", tsProviderFile, "ProviderHealthSettings"},
 	{"internal/frontend/serve/providers.go", "providerRemovalView", tsProviderFile, "ProviderRemoval"},
 	{"internal/frontend/serve/provider_check.go", "providerModelCheck", tsProviderFile, "ProviderModelCheck"},
 	{"internal/frontend/serve/settings.go", "modelEntry", tsModelFile, "ModelEntry"},
@@ -306,6 +314,9 @@ var mirroredWireTypes = []wireMirror{
 	{"internal/platform/gitpush/plan.go", "Plan", tsWorkspaceFile, "PushPlan"},
 	{"internal/platform/gitpush/push.go", "Result", tsWorkspaceFile, "PushResult"},
 	{"internal/frontend/serve/changes.go", "gitRepoRow", tsWorkspaceFile, "GitRepoRow"},
+	{"internal/platform/terminal/terminal.go", "Info", tsTerminalFile, "TerminalInfo"},
+	{"internal/platform/terminal/shells.go", "Shell", tsTerminalFile, "ShellChoice"},
+	{"internal/frontend/serve/terminals.go", "terminalFrame", tsTerminalFile, "TerminalFrame"},
 	{"internal/frontend/serve/changes.go", "gitReposView", tsWorkspaceFile, "GitRepos"},
 	{"internal/platform/gitstatus/commitdetail.go", "CommitFile", tsWorkspaceFile, "GitCommitFile"},
 	{"internal/frontend/serve/git_commit_detail.go", "commitFilesView", tsWorkspaceFile, "GitCommitFiles"},
@@ -324,6 +335,8 @@ var mirroredWireTypes = []wireMirror{
 	// reader's own size and wallpaper. A field one side cannot read is absent.
 	{"internal/frontend/serve/themes.go", "themeView", tsLookFile, "ThemePack"},
 	{"internal/ext/theme/theme.go", "Background", tsLookFile, "ThemeBackground"},
+	{"internal/ext/theme/theme.go", "SurfaceOpacities", tsLookFile, "ThemeSurfaceOpacities"},
+	{"internal/ext/theme/theme.go", "SurfaceOpacity", tsLookFile, "ThemeSurfaceOpacity"},
 	{"internal/ext/theme/theme.go", "Sky", tsLookFile, "ThemeSky"},
 	{"internal/ext/theme/theme.go", "Recipes", tsLookFile, "ThemeRecipes"},
 	{"internal/ext/theme/install.go", "Installed", tsLookFile, "ThemeImport"},
@@ -359,6 +372,11 @@ var partialWireMirrors = []partialWireMirror{
 	// reopened session shows the rewrite as the model's own.
 	{"internal/frontend/serve/history.go", "historyToolCall", "internal/frontend/tui/client.go", "HistoryToolCall",
 		[]string{"id", "name", "arguments", "argumentNormalization", "resolvedName", "capabilityId"}},
+	// The terminal's copy of /history's message. It draws no picture, but the
+	// count tells an image-only turn from host chrome, and via/modelRef are
+	// what a reload can no longer say once the reader drops them.
+	{"internal/frontend/serve/history.go", "historyMessage", "internal/frontend/tui/client.go", "HistoryMessage",
+		[]string{"images", "via", "modelRef"}},
 }
 
 // partialWireMirror is one declared subset: readerFile's readerType must carry

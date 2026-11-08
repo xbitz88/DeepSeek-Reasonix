@@ -43,13 +43,11 @@ func newRestartMaintenanceAgent(path string, messages []provider.Message, sink e
 	// fixture. New configs default to 0.85; users who set 0.80 keep 0.80.
 	// Economics off: the capacity share is the only trigger under test here.
 	return New(nil, tool.NewRegistry(), &sessionstore.Session{Messages: append([]provider.Message(nil), messages...)}, Options{
-		ContextWindow:     restartMaintenanceWindow,
-		CompactRatio:      0.80,
-		RecentKeep:        2,
-		SessionPath:       path,
-		WorkspaceID:       "workspace",
-		ModelRef:          "provider/model",
-		CompactionBudgets: CompactionBudgets{ContextSoftLimitTokens: -1},
+		ContextWindow: restartMaintenanceWindow,
+		CompactRatio:  0.80,
+		SessionPath:   path,
+		WorkspaceID:   "workspace",
+		ModelRef:      "provider/model",
 	}, sink)
 }
 
@@ -111,7 +109,6 @@ func TestContextMaintenanceRestoresAppliedProjectionWithoutReapplying(t *testing
 		&sessionstore.Session{Messages: append([]provider.Message(nil), messages...)}, Options{
 			ContextWindow: restartMaintenanceWindow,
 			CompactRatio:  0.80,
-			RecentKeep:    2,
 			SessionPath:   path,
 			WorkspaceID:   "workspace",
 			ModelRef:      "provider/model",
@@ -140,7 +137,6 @@ func TestContextMaintenanceRestoresAppliedProjectionWithoutReapplying(t *testing
 		&sessionstore.Session{Messages: append([]provider.Message(nil), messages...)}, Options{
 			ContextWindow: restartMaintenanceWindow,
 			CompactRatio:  0.80,
-			RecentKeep:    2,
 			SessionPath:   path,
 			WorkspaceID:   "workspace",
 			ModelRef:      "provider/model",

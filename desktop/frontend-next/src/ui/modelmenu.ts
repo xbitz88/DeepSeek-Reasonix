@@ -3,13 +3,31 @@ import type { ModelEntry } from "../port/port";
 import type { MenuItem } from "./Menu";
 import { groupVendors } from "./Models";
 import { t } from "../i18n";
+import { UNCONFIGURED_REF } from "./ConnectNote";
 import { KIND_LABEL } from "./vendors";
 import { orderAccounts } from "../state/providerorder";
+import { modelHealthStatus, type ModelHealth } from "./modelhealth";
+
+// modelTooltip names the active model with the picker's canonical account label.
+export function modelTooltip(models: ModelEntry[], current: string | undefined, label: string, effort?: string): string {
+  const account = groupVendors(models).find((a) =>
+    a.kinds.some((kind) => a.byKind[kind].some((model) => model.ref === current)));
+  const named = account ? `${account.label} / ${label}` : current ?? label;
+  return effort ? `${named} · ${effort}` : named;
+}
+
+// modelLabel is how the composer names the session's model: the alias, else the
+// entry's short form, else the id without its provider.
+export function modelLabel(models: ModelEntry[], status: { modelRef?: string; label?: string } | null | undefined): string {
+  if (status?.modelRef === UNCONFIGURED_REF) return t("common.not_connected");
+  const m = models.find((x) => x.ref === status?.modelRef);
+  return m?.modelAlias?.trim() || m?.modelShort || (status?.modelRef?.replace(/^[^/]+\//, "") ?? status?.label ?? "—");
+}
 
 // Every account gets a heading with its endpoint: the provider name is the
 // config's word for an entry, not the user's for an endpoint, and two doors onto
 // one account share it. Rows carry the wire format beside the model name.
-export function modelMenu(models: ModelEntry[], order: readonly string[] = [], current?: string): MenuItem[] {
+export function modelMenu(models: ModelEntry[], order: readonly string[] = [], current?: string, health: ModelHealth = {}): MenuItem[] {
   const accounts = orderAccounts(groupVendors(models), order);
   const out: MenuItem[] = [];
   for (const [i, a] of accounts.entries()) {
@@ -20,10 +38,11 @@ export function modelMenu(models: ModelEntry[], order: readonly string[] = [], c
       for (const m of a.byKind[kind]) {
         out.push({
           value: m.ref,
-          label: m.modelAlias?.trim() || m.model,
+          label: m.modelAlias?.trim() || m.modelShort || m.model,
           desc: m.modelAlias?.trim() ? m.model : undefined,
+          status: modelHealthStatus(health[m.provider]),
           meta: t(KIND_LABEL[kind] ?? kind),
-          badge: m.vision ? t("读图") : undefined,
+          badge: m.vision ? t("common.reads_images") : undefined,
           mono,
           mark: m.mark,
         });
@@ -41,9 +60,10 @@ export function modelMenu(models: ModelEntry[], order: readonly string[] = [], c
   }
   out.push({
     value: "__manage-models",
-    label: t("管理模型与连接"),
-    desc: t("服务商、API 与可用模型"),
+    label: t("composer.manage_models_and_connections"),
+    desc: t("composer.providers_api_access_and_available"),
     plain: true,
+    foot: true,
     divide: out.length > 0,
   });
   return out;

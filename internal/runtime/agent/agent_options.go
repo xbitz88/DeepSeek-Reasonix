@@ -8,7 +8,6 @@ import (
 	"reasonix/internal/ext/extension/dispatch"
 	"reasonix/internal/runtime/capability"
 	"reasonix/internal/runtime/writeclaim"
-	"reasonix/internal/safety/evidence"
 	"reasonix/internal/safety/sandbox"
 	"reasonix/internal/state/checkpoint"
 	"reasonix/internal/state/instruction"
@@ -73,8 +72,6 @@ type Options struct {
 	// unless a caller says otherwise, so a two-model stream says which model
 	// wrote each one rather than leaving it to be inferred.
 	EventSource string
-	// RequireVisibleFinal makes internal callers reject reasoning-only responses.
-	RequireVisibleFinal bool
 	// Gate is the per-call permission gate. nil disables gating.
 	Gate Gate
 	// CheckTargetAccess applies workspace path policy before hooks or previews.
@@ -96,31 +93,21 @@ type Options struct {
 	// files outside the workspace roots. nil keeps fail-closed behavior.
 	ConfigWriteApprover tool.ConfigWriteApprover
 
-	// Context management. ContextWindow <= 0 disables compaction. Ratios and
-	// RecentKeep fall back to defaults when unset.
+	// Context management. ContextWindow <= 0 disables compaction. Ratios fall
+	// back to defaults when unset.
 	ContextWindow     int
 	CompactRatio      float64
 	CompactionBudgets CompactionBudgets
 	// Deprecated compatibility inputs. New agents ignore these fields; automatic
 	// maintenance is controlled only by CompactRatio.
-	RecentKeep             int
 	ArchiveDir             string
-	KeepPolicy             KeepPolicy
 	SessionPath            string // projection sidecar path; empty = memory only
 	WorkspaceID            string // prompt-cache lineage component
 	StrictAlternatingRoles bool   // merge adjacent user turns for strict providers at request time
-	ContextEditing         string // deprecated; native provider editing was removed
 
 	// Hooks fires PreToolUse / PostToolUse shell hooks around tool calls. nil
 	// disables hook firing.
 	Hooks ToolHooks
-
-	// MissingReasoningWarnStateDir, when non-empty, points at the shared
-	// directory where missing tool-call thinking recovery retries are gated by
-	// opaque provider-configuration fingerprint (#7059). The field name is kept
-	// for source compatibility. Boot always supplies it; direct construction
-	// with an empty value keeps in-memory gating.
-	MissingReasoningWarnStateDir string
 
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
@@ -169,21 +156,12 @@ type Options struct {
 	ProjectChecks         []instruction.VerifyCheck
 	ProjectSensitivePaths []string
 
-	// EvidenceSeal seals each turn's shadow evidence bundle into Trusted Host
-	// State. nil seals nothing.
-	EvidenceSeal *EvidenceSeal
-
 	// DeliveryProfile enforces acceptance criteria before mutations and requires
 	// post-change review, verification, and evidence-backed sign-off before a
 	// final answer. It changes host control flow, not tool schemas.
 	// Deprecated: prefer AgentPreset + turn TaskPolicy. Still honored when
 	// AgentPreset is empty for one compatibility version of direct constructors.
 	DeliveryProfile bool
-
-	// WaiveOwedChecks is the user's choice to drop the check, review and
-	// sign-off a turn that changed files owes before it may finish. It never
-	// comes from a project file.
-	WaiveOwedChecks bool
 
 	// AgentPreset is the session role setting (balanced|delivery). Empty
 	// falls back to balanced unless DeliveryProfile is true (then delivery).
@@ -200,20 +178,13 @@ type Options struct {
 	// classification judges it instead of the raw Run input, so framing verbs
 	// cannot arm expectations; the delegation audit scores evidence origin
 	// against it, so only locations the parent wrote itself count as hints.
-	ClassifierTaskText     string
-	ExpectCompletionReport bool   // set where the contract is appended, never inferred
-	HandoffEntrance        string // delegation path, for telemetry only
+	ClassifierTaskText string
 
 	// CapabilityLedger is the optional turn-scoped capability route ledger for
 	// Delivery require/prefer gates. Nil disables capability gates.
 	CapabilityLedger *capability.Ledger
 	// CapabilityAudit is the optional non-persisted metrics sink for routing.
 	CapabilityAudit *capability.Audit
-
-	// RequireReviewReportKind, when non-empty, makes RunSubAgentWithSession fail
-	// unless the subagent recorded a successful review_report of this kind —
-	// review/security subagents must return typed, host-verifiable reports.
-	RequireReviewReportKind evidence.ReviewKind
 
 	// ReasoningLanguage controls visible reasoning language preference as transient
 	// user-turn context. Empty/auto injects nothing.

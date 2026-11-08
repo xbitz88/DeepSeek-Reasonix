@@ -19,10 +19,6 @@ type compactionProgress struct {
 	// threshold stays crossed, so without it every later round of the same turn
 	// would report the same "folded nothing" again.
 	lastReported maintenanceReport
-	// lastUserTurns is what the most recent fold could and could not hold of
-	// the user's own words. The notice fires once, at the moment of the fold;
-	// this is what /context can still answer with afterwards.
-	lastUserTurns userTurnRetention
 }
 
 // maintenanceReport is one reported no-fold verdict, scoped to the turn it was
@@ -142,11 +138,13 @@ func (m ContextManager) prepareOnce(ctx context.Context, policy ContextPreparePo
 		return prepared, nil
 	}
 	// Asking, overflow and a physical ceiling each waive the trigger. Only the
-	// last two, and an explicit force, waive what the fold has to be worth.
+	// last two, and an explicit force, waive what the fold has to be worth; asking
+	// by hand waives only how much was added.
 	scope := compactionScope{
 		ignoreThreshold: policy.IgnoreThreshold || policy.Trigger == CompactionTriggerManual ||
 			policy.Trigger == CompactionTriggerOverflow || est >= hard,
 		ignoreEconomics: policy.IgnoreEconomics || policy.Trigger == CompactionTriggerOverflow || est >= hard,
+		ignoreAmount:    policy.Trigger == CompactionTriggerManual,
 	}
 	if pressure < fold && !scope.ignoreThreshold {
 		return prepared, nil
@@ -179,7 +177,7 @@ func (m ContextManager) foldContext(ctx context.Context, prepared PreparedContex
 			return prepared, nil
 		}
 		status := "failed"
-		if errors.Is(err, errSummaryOutputTruncated) || errors.Is(err, errCheckpointRejected) {
+		if errors.Is(err, errCheckpointRejected) {
 			status = "blocked"
 		}
 		reason := fmt.Sprintf("context summary failed: %v", err)

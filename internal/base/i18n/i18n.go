@@ -86,8 +86,7 @@ type Messages struct {
 	NoticeCompactionFmt     string // a fold finished — %s how (one of the four below), %d tokens before, %d after
 	CompactionHowSummarized string
 	CompactionHowDegraded   string
-	CompactionHowNative     string
-	CompactionHowSnip       string
+	CompactionHowArchived   string
 	NoticeJobStartedFmt     string // a background job started — %s its label, else its id
 	NoticeJobFinishedFmt    string // a background job ended — %s its label, else its id
 	NoticeJobKilledFmt      string // a background job was killed — %s its label, else its id
@@ -108,6 +107,8 @@ type Messages struct {
 	ChatThinking                    string // live reasoning marker label, e.g. "thinking…"
 	ChatThoughtForFmt               string // collapsed reasoning summary, "%d" = elapsed s
 	ChatWorkedForFmt                string // end-of-turn line, "%s" = the turn's run time
+	ChatImageAttachedFmt            string // a restored turn's attachment line, "%d" = how many images
+	ChatFromDeviceFmt               string // where a restored user turn came from, "%d" = device number
 	ChatStatusThinkingFmt           string // "%s thinking… (%s · %s cancels)" — %s = spinner, %s = elapsed, %s = interrupt key
 	TurnPhaseWorking                string // host turn_phase label: working
 	TurnPhaseChecking               string // host turn_phase label: checking
@@ -174,6 +175,7 @@ type Messages struct {
 	QueueMessages
 	ResumePickerMessages
 	GoalMessages
+	UsageMessages
 	SettingMessages
 	ApprovalNeededFmt              string // notification text for a pending approval, tool only
 	ApprovalNeededWithSubjectFmt   string // notification text for a pending approval with subject

@@ -41,7 +41,6 @@ type Event struct {
 	Err             string              `json:"err,omitempty" externalizable:"true"`
 	Cancelled       bool                `json:"cancelled,omitempty"` // TurnDone: the user asked to stop
 	Outcome         string              `json:"outcome,omitempty"`
-	Readiness       *FinalReadiness     `json:"readiness,omitempty"`
 	Receipt         *CompletionReceipt  `json:"receipt,omitempty"`
 	CheckpointTurn  *int                `json:"checkpointTurn,omitempty"`
 	WorkDurationMs  int64               `json:"workDurationMs,omitempty"` // TurnDone: run time up to the final answer
@@ -202,9 +201,6 @@ func ToWire(e event.Event) Event {
 		w.Cancelled, w.Outcome = e.Cancelled, e.Outcome
 		w.CheckpointTurn, w.WorkDurationMs, w.WorkStartedAt = e.CheckpointTurn, e.WorkDurationMs, e.WorkStartedAt
 		w.Receipt = completionReceiptWire(e.Receipt)
-		if e.Readiness != nil {
-			w.Readiness = &FinalReadiness{Attempts: e.Readiness.Attempts, Missing: append([]string(nil), e.Readiness.Missing...)}
-		}
 		if e.Err != nil {
 			w.Err = e.Err.Error()
 		}
@@ -314,11 +310,6 @@ func ToWireVia(in *provider.Via) *Via {
 		return nil
 	}
 	return &Via{Device: in.Device, Ordinal: in.Ordinal}
-}
-
-type FinalReadiness struct {
-	Attempts int      `json:"attempts,omitempty"`
-	Missing  []string `json:"missing,omitempty"`
 }
 
 // MemoryCitation is the JSON form of provider.MemoryCitation.
@@ -523,6 +514,7 @@ type ShellExecution struct {
 	MutationRisk   string `json:"mutationRisk,omitempty"`
 	Verification   string `json:"verification,omitempty"`
 	DurationMs     int64  `json:"durationMs,omitempty"`
+	JobID          string `json:"jobId,omitempty"`
 }
 
 func toWireShellExecution(in *event.ShellExecution) *ShellExecution {
@@ -534,7 +526,7 @@ func toWireShellExecution(in *event.ShellExecution) *ShellExecution {
 		Platform: in.Platform, SupportsAndAnd: in.SupportsAndAnd,
 		State: in.State, FailurePhase: in.FailurePhase,
 		OutputTail: in.OutputTail, Subject: in.Subject, MutationRisk: in.MutationRisk,
-		Verification: in.Verification, DurationMs: in.DurationMs,
+		Verification: in.Verification, DurationMs: in.DurationMs, JobID: in.JobID,
 	}
 	if in.ExitCode != nil {
 		code := *in.ExitCode

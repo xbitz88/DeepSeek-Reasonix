@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -149,11 +150,14 @@ func resolveWorkspaceDir(dir string) (string, error) {
 		return "", err
 	}
 	info, err := os.Stat(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", refusal(http.StatusBadRequest, codeWorkspaceMissing, err, map[string]any{"path": abs})
+	}
 	if err != nil {
 		return "", err
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", abs)
+		return "", refusal(http.StatusBadRequest, codeWorkspaceMissing, fmt.Errorf("%s is not a directory", abs), map[string]any{"path": abs})
 	}
 	return abs, nil
 }
@@ -237,6 +241,7 @@ func (s *Server) statsSurface() surface.Surface { return s.surface.Or(surface.Se
 // switch would quietly serve another project's conversations.
 func (s *Server) rebuildOptions(cur control.SessionAPI, ref string) boot.Options {
 	opts := boot.Options{Model: ref, Sink: s.rebuildSink(), NativeSurfaces: true, Stderr: os.Stderr, StatsSource: s.statsSurface(), FeedbackSurface: feedbackSurface(s.statsSurface()), AccountsURL: accountsBaseURL(), ProviderResolver: s.resolver, CleanupPendingReconciler: BackgroundCleanupReconciler}
+	opts.DiagnosticSink = s.rebuildSink()
 	if s.lastBuild != nil {
 		opts.ComputerDriver = s.lastBuild.ComputerDriver
 	}

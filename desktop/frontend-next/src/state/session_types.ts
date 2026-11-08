@@ -1,9 +1,11 @@
 // What a session is made of, apart from the reducer that maintains it: the
 // rows the transcript draws and the state one turn hands the next.
 import type { StateTool } from "./outputcap";
-import type { Ask, Approval, Compaction, CostCoverage, ExtensionSurface, Guardian, Receipt, StoredAttachment, Via, WorkspaceLease } from "../port/wire";
+import type { Ask, Approval, Compaction, CostCoverage, ExtensionSurface, Guardian, StoredAttachment, Via, WorkspaceLease } from "../port/wire";
 import type { Sample } from "../port/tokens";
 import type { Executions } from "./executions";
+
+export type ThoughtCut = "stopped" | "failed";
 
 export type Item =
   // itemId names the durable queue entry while pending, which is what a
@@ -34,14 +36,16 @@ export type Item =
     }
   // source names which model wrote it — a turn can carry two, and the card is
   // where the answer has to survive.
-  | { t: "say"; id: string; text: string; reasoning?: string; done: boolean; thoughtMs?: number; source?: string; model?: string }
+  // cut says a thought still arriving when the turn was stopped or failed.
+  | { t: "say"; id: string; text: string; reasoning?: string; done: boolean; thoughtMs?: number; source?: string; model?: string; cut?: ThoughtCut }
   // omitted counts the characters of a running call's output that the page let go of from the front.
   | { t: "tool"; id: string; tool: StateTool; running: boolean; children: StateTool[]; omitted?: number }
   | { t: "reads"; id: string; tools: StateTool[] }
   | { t: "guardian"; id: string; g: Guardian }
   // by is who settled it when that was not this screen: the device named on
-  // the kernel's receipt, or the window when the receipt names none.
-  | { t: "approval"; id: string; a: Approval; verdict?: string; by?: Via | "window" }
+  // the kernel's receipt, or the window when the receipt names none. A started
+  // plan's steps are the last list the kernel reported for it.
+  | { t: "approval"; id: string; a: Approval; verdict?: string; by?: Via | "window"; steps?: PlanStep[] }
   // An ask answered on another screen keeps who answered it and what the
   // kernel recorded they said, since this screen never saw the selection.
   // recorded is the call's result when the card is rebuilt from history: the
@@ -49,7 +53,6 @@ export type Item =
   | { t: "ask"; id: string; ask: Ask; skipAt?: number; answered?: string[][]; answeredElsewhere?: boolean; timedOut?: boolean; by?: Via | "window"; said?: string; recorded?: string; surfaceValues?: Record<string, unknown>; surfaceExpired?: boolean }
   | { t: "compaction"; id: string; c: Compaction; done: boolean }
   | { t: "remember"; id: string; m: RememberedFact; forgotten?: boolean }
-  | { t: "receipt"; id: string; r: Receipt }
   | { t: "worked"; id: string; ms: number; startedAt?: number }
   | { t: "extension"; id: string; ext: ExtensionSurface }
   // code identifies what the kernel is reporting. text is its own English,

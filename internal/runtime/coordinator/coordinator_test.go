@@ -989,7 +989,7 @@ func TestCoordinatorDoesNotSkipExecutorForPartialNoOpPlanWithActions(t *testing.
 }
 
 func TestCoordinatorHandoffAffirmsExecutorToolSchemasWhenPlannerClaimsNoMCP(t *testing.T) {
-	planner := &mockProvider{name: "planner", streams: submitPlanCall(`{"objective":"search GitHub for the issue","steps":[{"title":"query the GitHub MCP capability","verification":[{"command":"search issues"}]}]}`)}
+	planner := &mockProvider{name: "planner", streams: submitPlanCall(`{"objective":"search GitHub for the issue","steps":[{"title":"query the GitHub MCP capability","candidate_files":["github"]}]}`)}
 	exec := &mockProvider{name: "executor", streams: [][]provider.Chunk{
 		{
 			{Type: provider.ChunkText, Text: "GitHub MCP is unavailable."},
@@ -1230,7 +1230,6 @@ func TestDefaultPlannerPromptDefinesLightAndFullEvidenceContracts(t *testing.T) 
 		"depth=light",
 		"depth=full",
 		"submit_plan",
-		"command-level verification",
 		"assumptions",
 	} {
 		// The verified/candidate split is asserted where it is enforced: the schema.
@@ -1495,11 +1494,7 @@ func TestCoordinatorRunsExecutorWhenMarkerNotAlone(t *testing.T) {
 // successful plan.
 func TestCoordinatorHandoffSurvivesPlannerCompaction(t *testing.T) {
 	planner := &mockProvider{name: "planner", streams: [][]provider.Chunk{
-		{ // preflight compaction on the large filler history (estimate-based)
-			{Type: provider.ChunkText, Text: "- goal: prior filler\n- pending: plan the fix"},
-			{Type: provider.ChunkDone},
-		},
-		{ // the plan turn after projection is in place
+		{ // the plan turn; preflight compaction archives the filler without a model call
 			{Type: provider.ChunkText, Text: "Edit main.go and add the missing guard."},
 			{Type: provider.ChunkUsage, Usage: &provider.Usage{PromptTokens: 400, TotalTokens: 450}},
 			{Type: provider.ChunkDone},
@@ -1755,27 +1750,5 @@ func TestCoordinatorSkipsApprovalGateForNegatedApprovalWording(t *testing.T) {
 	}
 	if len(exec.requests) == 0 {
 		t.Fatal("executor should run directly for negated approval wording")
-	}
-}
-
-// The nudge is the executor's one chance inside the turn; an executor that
-// still changes nothing is held by the plan deliverable rather than let through.
-func TestCoordinatorHoldsAnExecutorThatStillChangesNothingAfterTheNudge(t *testing.T) {
-	planner := &mockProvider{name: "planner", streams: submitPlanCall(`{"objective":"install the skill","steps":[{"title":"write the requested skill file","candidate_files":["kan-tu.md"]}]}`)}
-	exec := &mockProvider{name: "executor", streams: [][]provider.Chunk{
-		{{Type: provider.ChunkText, Text: "Looks straightforward."}, {Type: provider.ChunkDone}},
-		{{Type: provider.ChunkText, Text: "Done."}, {Type: provider.ChunkDone}},
-	}}
-	execReg := tool.NewRegistry()
-	execReg.Add(coordinatorTestTool{name: "write_file", readOnly: false, output: "wrote file", writesPaths: true})
-	executor := agent.New(exec, execReg, sessionstore.NewSession("exec-sys"), agent.Options{}, event.Discard)
-	coord := NewCoordinator(planner, sessionstore.NewSession("planner-sys"), nil, agent.PlannerToolRegistry(tool.NewRegistry()), agent.Options{}, executor, 0, event.Discard, nil)
-
-	err := coord.Run(context.Background(), "install the skill")
-	if err == nil || !strings.Contains(err.Error(), "names files to change") {
-		t.Fatalf("Run = %v, want the plan deliverable to hold the answer", err)
-	}
-	if got := len(exec.requests); got != 2 {
-		t.Fatalf("executor requests = %d, want the answer and the one nudge before the hold", got)
 	}
 }

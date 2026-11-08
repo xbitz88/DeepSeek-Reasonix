@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Queue } from "./Queue";
 import { BLOCK_WHY } from "../i18n/queue_why";
-import { EN } from "../i18n/en";
+import { EN as LEGACY } from "../i18n/en";
+import { catalogue } from "../i18n/msg";
+
+const EN: Record<string, string> = { ...LEGACY, ...catalogue("en") };
+const ZH = catalogue("zh");
 import type { Queue as QueueSnapshot, QueueItem } from "../port/port";
 
 const item = (over: Partial<QueueItem> = {}): QueueItem => ({
@@ -22,24 +26,73 @@ const snapshot = (over: Partial<QueueSnapshot> = {}): QueueSnapshot => ({
   ...over,
 });
 
-const paint = (q: QueueSnapshot, running: boolean) =>
+const paint = (q: QueueSnapshot, running: boolean, shown?: ReadonlySet<string>) =>
   renderToStaticMarkup(
     <Queue
       queue={q}
       running={running}
-      onRead={async () => ""}
-      onEdit={() => {}}
-      onMove={() => {}}
+      shown={shown}
       onSendNow={() => {}}
+      onToSteer={() => {}}
       onCancel={() => {}}
       onRetry={() => {}}
-      onRefresh={() => {}}
       onPause={() => {}}
     />,
   );
 
 const draw = (q: QueueSnapshot) => paint(q, true);
 const drawIdle = (q: QueueSnapshot) => paint(q, false);
+
+describe("queue strip", () => {
+  it("draws one pill row per entry with the design's three actions in order", () => {
+    const html = draw(snapshot({ items: [item({ state: "queued", intent: "followup" }), item({ id: "i2", state: "queued", intent: "followup" })] }));
+    const actions = [...html.matchAll(/data-action="([^"]+)"/g)].map((m) => m[1]);
+    expect(actions).toEqual(["queue.to-steer", "queue.send-now", "queue.cancel", "queue.to-steer", "queue.send-now", "queue.cancel"]);
+    expect(html).toContain("改为插话");
+    expect(html).toContain("立即发送");
+    expect(html).toContain("撤回");
+    expect(html).not.toContain("暂停派发");
+    expect(html).not.toContain("draggable");
+  });
+
+  it("offers only send-now and withdraw on guidance the turn has already accepted", () => {
+    const html = draw(snapshot({ items: [item(), item({ id: "i2" })] }));
+    const actions = [...html.matchAll(/data-action="([^"]+)"/g)].map((m) => m[1]);
+    expect(actions).toEqual(["queue.send-now", "queue.cancel", "queue.send-now", "queue.cancel"]);
+  });
+
+  it("numbers a follow-up by its place in the strip", () => {
+    const html = draw(snapshot({ items: [item({ state: "queued", intent: "followup" }), item({ id: "i2", state: "queued", intent: "followup" })] }));
+    expect(html).toContain("排队 1");
+    expect(html).toContain("排队 2");
+  });
+
+  it("offers no steer conversion on a line that carries a picture or frozen files", () => {
+    expect(draw(snapshot({ items: [item({ state: "queued", intent: "followup", images: true })] }))).not.toContain("queue.to-steer");
+    expect(draw(snapshot({ items: [item({ state: "queued", intent: "followup", refs: [{ path: "a.go" }] })] }))).not.toContain("queue.to-steer");
+  });
+
+  it("leaves out guidance the transcript already shows as its own bubble", () => {
+    expect(paint(snapshot(), true, new Set(["i1"]))).toBe("");
+  });
+
+  it("keeps the release control when the queue is held", () => {
+    const html = draw(snapshot({ paused: true }));
+    expect(html).toContain("继续派发");
+    expect(html).not.toContain("queue.send-now");
+  });
+
+  it("keeps long reasons in titles and limits inline reasons to held entries", () => {
+    const why = "long delivery explanation";
+    const queued = draw(snapshot({ items: [item({ state: "queued", blockReason: why })] }));
+    expect(queued).toContain(`title="${why}"`);
+    expect(queued).not.toContain('class="qwhy"');
+    for (const state of ["blocked", "uncertain"] as const) {
+      expect(draw(snapshot({ items: [item({ state, blockReason: why })] })))
+        .toContain(`class="qwhy" title="${why}"`);
+    }
+  });
+});
 
 describe("why a held entry stopped", () => {
   const held = (over: Partial<QueueItem>) => draw(snapshot({ paused: true, items: [item({ state: "uncertain", ...over })] }));
@@ -52,7 +105,7 @@ describe("why a held entry stopped", () => {
 
   it.each(Object.entries(BLOCK_WHY))("%s reads in Chinese and has an English sentence", (code, zh) => {
     const html = held({ blockCode: code, blockReason: "kernel diagnostic" });
-    expect(html).toContain(zh);
+    expect(html).toContain(ZH[zh] ?? zh);
     expect(html).not.toContain("kernel diagnostic");
     expect(EN[zh], `no English for ${code}`).toBeTruthy();
     expect(EN[zh]).not.toBe(zh);
@@ -60,7 +113,7 @@ describe("why a held entry stopped", () => {
 
   it("covers exactly the codes the kernel sends", () => {
     expect(Object.keys(BLOCK_WHY).sort()).toEqual(
-      ["manifest_salvaged", "owner_inactive", "steer_unapplied", "turn_ack_failed", "turn_snapshot_failed"],
+      ["foreign_images", "manifest_salvaged", "owner_inactive", "steer_unapplied", "turn_ack_failed", "turn_snapshot_failed"],
     );
   });
 
@@ -68,7 +121,7 @@ describe("why a held entry stopped", () => {
     expect(held({ blockCode: "steer_unapplied" })).toContain('data-action="queue.retry"');
   });
 
-  it.each(["turn_ack_failed", "turn_snapshot_failed", "owner_inactive", "manifest_salvaged", "future_code"])(
+  it.each(["turn_ack_failed", "turn_snapshot_failed", "owner_inactive", "manifest_salvaged", "foreign_images", "future_code"])(
     "offers no Retry on an uncertain %s entry, which may already have run",
     (code) => {
       expect(held({ blockCode: code })).not.toContain('data-action="queue.retry"');
@@ -105,23 +158,25 @@ describe("what the pending strip says back", () => {
   // to reach them here.
   it("shows a host continuation that needs a decision", () => {
     const html = draw(snapshot({ items: [item({ origin: "host", state: "blocked", intent: "followup" })] }));
-    expect(html).toContain("受阻");
+    expect(html).toContain("后台 · 受阻");
+    expect(html).toContain('title="后台任务续接"');
+    const uncertain = draw(snapshot({ items: [item({ origin: "host", state: "uncertain", intent: "followup" })] }));
+    expect(uncertain).toContain("后台 · 状态不明");
   });
 
   it("names an accepted steer as taken, not as waiting", () => {
-    const html = draw(snapshot());
-    expect(html).toContain("插话已收");
-    expect(html).toContain('data-tone="accent"');
+    expect(draw(snapshot())).toContain("插话已收");
   });
 
-  it("keeps a queued follow-up apart from a steer the kernel took", () => {
+  it("says a queued follow-up is queued, not accepted", () => {
     const html = draw(snapshot({ items: [item({ intent: "followup", state: "queued" })] }));
-    expect(html).toContain("尚未送达，可以改，也可以取回");
+    expect(html).toContain("排队 1");
     expect(html).not.toContain("插话已收");
   });
 
+
   it("offers taking it back while that is still true", () => {
-    expect(draw(snapshot())).toContain("取回");
+    expect(draw(snapshot())).toContain("撤回");
   });
 
   // Past the tool boundary the text is the model's, and the kernel refuses the
@@ -144,39 +199,12 @@ describe("what the pending strip says back", () => {
     expect(drawIdle(snapshot())).not.toContain("立即发送");
   });
 
-  it("keeps technical capacity out of the ordinary one-line queue", () => {
-    const html = draw(snapshot());
-    expect(html).not.toContain("1/64");
-    expect(html).not.toContain("3.1k/64M");
-    expect(html).toContain("尚未送达，可以改，也可以取回");
-  });
 
   // Capacity becomes useful when it needs attention rather than occupying the
   // primary layout for every one-line follow-up.
-  it("reveals both capacity limits when either is under pressure", () => {
-    const html = draw(snapshot({ capacity: { items: 49, maxItems: 64, bytes: 3174, maxBytes: 64 << 20 } }));
-    expect(html).toContain("49/64");
-    expect(html).toContain("3.1k/64M");
-  });
 
-  it("draws each capacity limit as a labelled meter with its own value and maximum", () => {
-    const html = draw(snapshot({ capacity: { items: 64, maxItems: 64, bytes: 3174, maxBytes: 64 << 20 } }));
-    expect(html).toMatch(/role="meter" aria-label="条目" aria-valuemin="0" aria-valuemax="64" aria-valuenow="64" data-full="true"/);
-    expect(html).toMatch(/role="meter" aria-label="字节" aria-valuemin="0" aria-valuemax="67108864" aria-valuenow="3174"/);
-    expect(html).not.toMatch(/aria-label="字节"[^>]*data-full/);
-  });
 
-  it("draws no item meter when the queue has no item limit, only the byte one under pressure", () => {
-    const html = draw(snapshot({ capacity: { items: 300, maxItems: 0, bytes: 60 << 20, maxBytes: 64 << 20 } }));
-    expect(html).not.toContain("300/0");
-    expect(html).not.toMatch(/aria-label="条目" aria-valuemin/);
-    expect(html).toMatch(/role="meter" aria-label="字节"/);
-  });
 
-  it("shows no capacity strip for a long unlimited queue with room in the bytes", () => {
-    const html = draw(snapshot({ capacity: { items: 300, maxItems: 0, bytes: 3174, maxBytes: 64 << 20 } }));
-    expect(html).not.toContain('class="qcap"');
-  });
 
   it("renders nothing when there is nothing waiting and the queue is not held", () => {
     expect(draw(snapshot({ items: [], capacity: { items: 0, maxItems: 64, bytes: 0, maxBytes: 64 << 20 } }))).toBe("");

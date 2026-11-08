@@ -27,18 +27,16 @@ var constraints = map[string]Entry{
 	"billing.display_currency":                      {Via: viaString((*config.Config).SetDisplayCurrency)},
 	"desktop.currency":                              {Via: viaString((*config.Config).SetDesktopCurrency)},
 	"desktop.reasoning_display_mode":                {Via: viaString((*config.Config).SetDesktopReasoningDisplayMode)},
+	"memory.proactive":                              {Via: viaString((*config.Config).SetMemoryProactive)},
 	"agent.auto_plan":                               {Via: viaString((*config.Config).SetAutoPlan)},
 	"agent.default_mode":                            {Via: viaString((*config.Config).SetDefaultMode)},
 	"agent.web_search_model":                        {Via: viaString((*config.Config).SetWebSearchModel)},
-	"agent.cold_resume_prune":                       {Via: viaBool((*config.Config).SetColdResumePrune)},
 	"ui.show_reasoning":                             {Via: viaBool((*config.Config).SetShowReasoning)},
 	"desktop.expand_thinking":                       {Via: viaBool((*config.Config).SetExpandThinking)},
 	"desktop.status_bar_items":                      {Via: viaList((*config.Config).SetDesktopStatusBarItems)},
 	"agent.compact_ratio":                           {Via: viaFloat((*config.Config).SetCompactRatio)},
-	"agent.context_soft_limit_tokens":               {Via: viaInt((*config.Config).SetContextSoftLimitTokens)},
 	"agent.advisor_model":                           {Free: true},
 	"agent.auto_plan_classifier":                    {Free: true},
-	"agent.context_editing":                         {Free: true},
 	"agent.decision_model":                          {Free: true},
 	"agent.output_style":                            {Free: true},
 	"agent.planner_model":                           {Free: true},
@@ -75,6 +73,7 @@ var constraints = map[string]Entry{
 	"desktop.appearance.read_size":                  {Free: true},
 	"desktop.appearance.text_size":                  {Free: true},
 	"desktop.appearance.zoom":                       {Free: true},
+	"desktop.appearance.width_percent":              {Free: true},
 	"agent.keep":                                    {Free: true},
 	"skills.disabled_skills":                        {Free: true},
 	"mods.hook_budget_ms":                           {Min: 0, Max: 55000, Bounded: true},
@@ -84,9 +83,6 @@ var constraints = map[string]Entry{
 	"mods.submit_per_turn":                          {Min: 0, Max: 1000, Bounded: true},
 	"mods.submit_bytes":                             {Min: 0, Max: 1 << 24, Bounded: true},
 	"agent.checkpoint_ceiling_ratio":                {Min: 0.05, Max: 1, Bounded: true},
-	"agent.compact_force_ratio":                     {Min: 0.05, Max: 1, Bounded: true},
-	"agent.soft_compact_ratio":                      {Min: 0.05, Max: 1, Bounded: true},
-	"agent.tool_result_snip_ratio":                  {Min: 0.05, Max: 1, Bounded: true},
 	"agent.temperature":                             {Min: 0, Max: 2, Bounded: true},
 	"agent.recovery_temperature":                    {Min: 0, Max: 2, Bounded: true},
 	"desktop.appearance.wallpaper.dim":              {Min: 0, Max: 1, Bounded: true},
@@ -120,10 +116,6 @@ func viaString(set func(*config.Config, string) error) func(*config.Config, any)
 
 func viaBool(set func(*config.Config, bool) error) func(*config.Config, any) error {
 	return func(c *config.Config, v any) error { return set(c, v.(bool)) }
-}
-
-func viaInt(set func(*config.Config, int) error) func(*config.Config, any) error {
-	return func(c *config.Config, v any) error { return set(c, v.(int)) }
 }
 
 func viaFloat(set func(*config.Config, float64) error) func(*config.Config, any) error {

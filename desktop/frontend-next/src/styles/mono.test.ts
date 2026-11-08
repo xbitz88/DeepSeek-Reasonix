@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 // The judgement is structural, never a look at the words: a class is monospaced
 // if a rule in app.css gives it var(--mono), and an element renders prose if its
 // own children call t(). Nothing here reads what a string says.
-const CSS = import.meta.glob("./app.css", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+const CSS = import.meta.glob(["./app.css", "./find.css"], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 const SOURCES = import.meta.glob(["../**/*.tsx", "!../**/*.test.*"], {
   query: "?raw",
   import: "default",
@@ -23,6 +23,7 @@ const MARKS: Record<string, string> = {
   x: "× — the close mark, sized to hold its cell beside ✓",
   "ptab-x": "× — same mark on a pane tab",
   ah: "› — the affordance arrow",
+  "mode-toggle": "Aa and .* — the glyphs of the search flags they switch, which are the flags' own notation",
   prompt: "› — the composer's own prompt character",
   esc: "Esc — a keycap, which is lettering on a key rather than prose",
   "oobe-brand": "the lockup's STUDIO line, deliberately set in the terminal's face",
@@ -35,7 +36,7 @@ const MARKS: Record<string, string> = {
 // change per call site rather than per rule — recorded so the count cannot grow
 // while the work is outstanding. Never widen this to land a change.
 const MIXED = new Set([
-  "c", "cnt", "cost", "cur", "d", "delta", "dt", "fail", "isolab", "k",
+  "c", "cnt", "cost", "cur", "d", "delta", "dt", "fail", "k",
   "lb", "meta", "mk", "n", "nm", "ntimes", "path", "pill", "pt", "r", "rmtcand", "rt",
   "sc", "st", "sym", "sz", "tag", "u", "uspan", "v",
 ]);
@@ -131,7 +132,7 @@ function landings(mono: Set<string>): Landing[] {
 }
 
 describe("monospace is for machine facts", () => {
-  const mono = monoClasses(Object.values(CSS)[0]);
+  const mono = monoClasses(Object.values(CSS).join("\n"));
   const all = landings(mono);
   const byClass = new Map<string, Landing[]>();
   for (const l of all) byClass.set(l.cls, [...(byClass.get(l.cls) ?? []), l]);

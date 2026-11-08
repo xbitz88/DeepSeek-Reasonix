@@ -69,8 +69,8 @@ export function PhonePop({ hub }: { hub: HubPort }) {
         data-live={shareOpen ? "" : undefined}
         data-online={online > 0 ? "" : undefined}
         aria-expanded={open}
-        aria-label={t("设备访问")}
-        title={online > 0 ? t("设备访问 · {n} 台在线", { n: online }) : t("设备访问")}
+        aria-label={t("remote.device_access")}
+        title={online > 0 ? t("remote.device_access_n_online", { n: online }) : t("remote.device_access")}
         onClick={() => setOpen((v) => !v)}
       >
         <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -94,33 +94,33 @@ export function presenceNote(prev: PairedDevice[], next: PairedDevice[]): string
   let said = "";
   next.forEach((d, i) => {
     const was = prev.find((p) => p.id === d.id);
-    if (d.online && !was?.online) said = t("设备 {n} 已连接", { n: i + 1 });
-    else if (!d.online && was?.online) said = t("设备 {n} 已断开", { n: i + 1 });
+    if (d.online && !was?.online) said = t("remote.device_n_connected", { n: i + 1 });
+    else if (!d.online && was?.online) said = t("remote.device_n_disconnected", { n: i + 1 });
   });
   prev.forEach((p, i) => {
-    if (!next.some((d) => d.id === p.id)) said = t("设备 {n} 已断开", { n: i + 1 });
+    if (!next.some((d) => d.id === p.id)) said = t("remote.device_n_disconnected", { n: i + 1 });
   });
   return said;
 }
 
 export function cloudPresenceNote(prev: CloudDevice[], next: CloudDevice[]): string {
   const connected = next.find((device) => !prev.some((was) => was.id === device.id));
-  if (connected) return t("Web Studio 已连接");
+  if (connected) return t("remote.web_studio_connected");
   const disconnected = prev.find((device) => !next.some((now) => now.id === device.id));
-  return disconnected ? t("Web Studio 已断开") : "";
+  return disconnected ? t("remote.web_studio_disconnected") : "";
 }
 
 function cloudRemoteNote(status: CloudRemoteStatus | undefined): string {
   if (status?.online) {
-    return t("互联网连接需要登录同一账号，内容端到端加密；局域网直连只在可信网络中开启。");
+    return t("remote.internet_access_requires_the_same");
   }
   switch (status?.reason) {
     case "relay_unreachable":
-      return t("中转服务暂时无法连接，请检查网络或代理设置后重试。");
+      return t("remote.the_relay_cannot_be_reached");
     case "relay_refused":
-      return t("中转服务拒绝了这台设备的连接，请稍后重试。");
+      return t("remote.the_relay_refused_this_devices");
     default:
-      return t("登录 Reasonix 账号后，可生成在外网也能使用的连接二维码。");
+      return t("remote.sign_in_to_reasonix_to");
   }
 }
 
@@ -164,8 +164,8 @@ function useCloudPresenceNote(devices: CloudDevice[] | undefined, open: boolean)
   return open ? "" : note;
 }
 
-/** The card leads with the account-gated Internet route, then keeps the LAN
- *  listener as the faster, explicitly enabled alternative. */
+/** The phones already connected, then the two ways a phone gets here: the
+ *  same network, which has to be switched on, and the account-gated relay. */
 function PhoneCard({ share, failure }: { share: Share; failure: string }) {
   const { st, ip, pick, offer, cloudOffer, busy, newCode, newCloudCode, toggle, revoke } = share;
   const [copied, setCopied] = useState(false);
@@ -197,132 +197,135 @@ function PhoneCard({ share, failure }: { share: Share; failure: string }) {
     void revoke(id);
   };
 
+  const phones = st.cloudDevices.length + (st.open ? st.devices.filter((d) => d.online).length : 0);
   return (
-    <div className="phonecard" role="dialog" aria-label={t("设备访问")}>
+    <div className="phonecard" role="dialog" aria-label={t("remote.device_access")}>
       <header>
         <span>
-          <b>{t("设备访问")}</b>
-          <small>{t("手机扫码即可进入这台电脑的 Studio")}</small>
+          <b>{t("remote.use_studio_on_your_phone")}</b>
+          <small>{t("remote.scan_with_your_phone_to")}</small>
         </span>
       </header>
 
       {failure && <p className="pc-err" role="alert">{failure}</p>}
 
-      {st.cloudRemote?.online && (
-        <div className="pc-code" data-cloud="">
-          {cloudOffer ? (
-            <>
-              <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(cloudOffer.qr)}`} alt={t("互联网连接二维码")} width={148} height={148} />
-              <span className="pc-when">{t("手机扫码 · 不在同一网络也能连接")}</span>
-              <span className="pc-acts">
-                <button data-action="share.cloud-copy" onClick={() => void copy(cloudOffer.url)}>{copied ? t("已复制") : t("复制链接")}</button>
-                <i aria-hidden="true" />
-                <button data-action="share.cloud-offer" disabled={busy} onClick={() => void newCloudCode()}>{t("刷新二维码")}</button>
-              </span>
-            </>
-          ) : (
-            <button className="pc-mint" data-action="share.cloud-offer" disabled={busy} onClick={() => void newCloudCode()}>
-              {busy ? t("正在生成二维码…") : t("显示互联网连接二维码")}
-            </button>
-          )}
-        </div>
-      )}
-
-      <section>
-        <div className="pc-hd">
-          <span>
-            <b>{t("同一网络直连")}</b>
-            <small>{t("速度更快，不经过中转")}</small>
-          </span>
-          <Switch data-action="share.toggle" on={st.open} busy={busy || noNetwork} label={t("允许局域网访问")} onClick={() => void toggle()} />
-        </div>
-
-        {st.open && (
-          <div className="pc-code">
-            {offer ? (
-              <>
-                <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(offer.qr)}`} alt={t("配对二维码")} width={148} height={148} />
-                <span className="pc-when">{t("局域网配对 · {time} 前有效", { time: clock(offer.expires) })}</span>
-                <span className="pc-acts">
-                  <button data-action="share.copy" onClick={() => void copy(offer.url)}>{copied ? t("已复制") : t("复制链接")}</button>
-                  <i aria-hidden="true" />
-                  <button data-action="share.offer" disabled={busy} onClick={() => void newCode()}>{t("换一个")}</button>
-                </span>
-              </>
-            ) : (
-              <button className="pc-mint" data-action="share.offer" disabled={busy} onClick={() => void newCode()}>
-                {t("显示局域网二维码")}
-              </button>
-            )}
-          </div>
-        )}
-      </section>
-
-      {st.cloudDevices.length > 0 && (
-        <section>
+      {(st.cloudDevices.length > 0 || (st.open && st.devices.length > 0)) && (
+        <section className="pc-phones">
           <div className="pc-hd">
-            <b>{t("互联网远程")}</b>
-            <small>{st.cloudDevices.length}</small>
+            <b>{t("remote.n_phones_connected", { n: phones })}</b>
           </div>
           {st.cloudDevices.map((device) => (
             <div className="pc-dev" key={device.id} data-online="">
               <i aria-hidden="true" />
-              <span>{t("设备 {n}", { n: device.ordinal })}</span>
-              <small>{device.name} · {t("在线")}</small>
+              <span>{t("remote.device_n", { n: device.ordinal })}</span>
+              <small>{device.name} · {t("remote.from_anywhere")}</small>
               <button
                 data-action={arming === device.id ? "share.revoke" : "share.ask-revoke"}
                 data-target={device.id}
                 data-armed={arming === device.id ? "" : undefined}
                 onClick={() => disconnect(device.id)}
               >
-                {arming === device.id ? t("确认断开") : t("断开")}
+                {arming === device.id ? t("remote.disconnect_2") : t("remote.disconnect")}
               </button>
             </div>
           ))}
-        </section>
-      )}
-
-      {st.addresses.length > 1 && (
-        <label className="pc-row">
-          <span>{t("网络")}</span>
-          <select data-action="share.address" value={chosen} disabled={busy} onChange={(e) => pick(e.target.value)}>
-            {st.addresses.map((a) => (
-              <option key={a.ip} value={a.ip}>
-                {a.kind === "tailnet" ? `${a.ip} · Tailscale` : a.kind === "virtual" ? `${a.ip} · ${t("虚拟网卡")}` : `${a.ip} · ${a.interface}`}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
-      {st.open && (
-        <section>
-          <div className="pc-hd">
-            <b>{t("已连接")}</b>
-            <small>{st.devices.length}</small>
-          </div>
-          {st.devices.map((d, i) => (
+          {st.open && st.devices.map((d, i) => (
             <div className="pc-dev" key={d.id} data-online={d.online ? "" : undefined}>
               <i aria-hidden="true" />
               <span title={d.name}>{deviceLabel(i)}</span>
-              <small>{d.online ? t("在线") : t("最近 {time}", { time: clock(d.lastSeen) })}</small>
+              <small>{t("remote.same_wifi")} · {d.online ? t("remote.online") : t("remote.last_seen_time", { time: clock(d.lastSeen) })}</small>
               <button
                 data-action={arming === d.id ? "share.revoke" : "share.ask-revoke"}
                 data-target={d.id}
                 data-armed={arming === d.id ? "" : undefined}
                 onClick={() => disconnect(d.id)}
               >
-                {arming === d.id ? t("确认断开") : t("断开")}
+                {arming === d.id ? t("remote.disconnect_2") : t("remote.disconnect")}
               </button>
             </div>
           ))}
-          {st.devices.length === 0 && <p>{t("还没有手机连上来")}</p>}
         </section>
       )}
 
-      <p className="pc-note">
-        {cloudRemoteNote(st.cloudRemote)}
-      </p>
+      <p className="pc-cap">{t("remote.how_the_phone_reaches_this")}</p>
+
+      <section className="pc-route" data-on={st.open ? "" : undefined}>
+        <div className="pc-hd">
+          <span>
+            <b>{t("remote.same_wifi")}</b>
+            <small>{chosen ? t("remote.ip_fastest", { ip: chosen }) : t("remote.faster_without_the_relay")}</small>
+          </span>
+          <Switch data-action="share.toggle" on={st.open} busy={busy || noNetwork} label={t("remote.allow_local_network_access")} onClick={() => void toggle()} />
+        </div>
+
+        {st.open && (
+          <div className="pc-code">
+            {offer ? (
+              <>
+                <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(offer.qr)}`} alt={t("remote.pairing_qr_code")} width={148} height={148} />
+                <span className="pc-side">
+                  <span className="pc-when">{t("remote.local_pairing_valid_until_time", { time: clock(offer.expires) })}</span>
+                  <span className="pc-acts">
+                    <button data-action="share.copy" onClick={() => void copy(offer.url)}>{copied ? t("common.copied") : t("remote.copy_link")}</button>
+                    <i aria-hidden="true" />
+                    <button data-action="share.offer" disabled={busy} onClick={() => void newCode()}>{t("common.new_code")}</button>
+                  </span>
+                </span>
+              </>
+            ) : (
+              <button className="pc-mint" data-action="share.offer" disabled={busy} onClick={() => void newCode()}>
+                {t("remote.show_local_network_qr_code")}
+              </button>
+            )}
+          </div>
+        )}
+
+        {st.addresses.length > 1 && (
+          <label className="pc-row">
+            <span>{t("common.network")}</span>
+            <select data-size="sm" data-action="share.address" value={chosen} disabled={busy} onChange={(e) => pick(e.target.value)}>
+              {st.addresses.map((a) => (
+                <option key={a.ip} value={a.ip}>
+                  {a.kind === "tailnet" ? `${a.ip} · Tailscale` : a.kind === "virtual" ? `${a.ip} · ${t("remote.virtual_adapter")}` : `${a.ip} · ${a.interface}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {st.open && st.devices.length === 0 && <p className="pc-none">{t("remote.no_phone_connected_yet")}</p>}
+      </section>
+
+      <section className="pc-route" data-on={st.cloudRemote?.online ? "" : undefined}>
+        <div className="pc-hd">
+          <span>
+            <b>{t("remote.from_anywhere")}</b>
+            <small>{t("remote.needs_signing_in")}</small>
+          </span>
+        </div>
+        {st.cloudRemote?.online ? (
+          <div className="pc-code" data-cloud="">
+            {cloudOffer ? (
+              <>
+                <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(cloudOffer.qr)}`} alt={t("remote.internet_connection_qr_code")} width={148} height={148} />
+                <span className="pc-side">
+                  <span className="pc-when">{t("remote.scan_with_your_phone_works")}</span>
+                  <span className="pc-acts">
+                    <button data-action="share.cloud-copy" onClick={() => void copy(cloudOffer.url)}>{copied ? t("common.copied") : t("remote.copy_link")}</button>
+                    <i aria-hidden="true" />
+                    <button data-action="share.cloud-offer" disabled={busy} onClick={() => void newCloudCode()}>{t("remote.refresh_qr_code")}</button>
+                  </span>
+                </span>
+              </>
+            ) : (
+              <button className="pc-mint" data-action="share.cloud-offer" disabled={busy} onClick={() => void newCloudCode()}>
+                {busy ? t("remote.creating_qr_code") : t("remote.show_internet_connection_qr_code")}
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="pc-note">{cloudRemoteNote(st.cloudRemote)}</p>
+        )}
+      </section>
     </div>
   );
 }

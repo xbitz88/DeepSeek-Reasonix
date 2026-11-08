@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -10,19 +9,13 @@ import (
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/eventwire"
-	"reasonix/internal/runtime/agent"
 	"reasonix/internal/safety/permission"
 	"reasonix/internal/session/control"
 )
 
-// runExitUnverified is `run --fail-on-unverified`'s exit status when the model
-// finished but the host's final-readiness judgement was left unmet. It is
-// apart from 1 (run error) and 2 (usage) so automation can tell them apart.
-const runExitUnverified = 3
-
 // runExitUntrustedFolder is the exit status of a run whose edits or commands
 // were refused because the folder is untrusted, so the work was not done. It
-// is apart from 1, 2 and 3; --fail-on-unverified keeps reporting 3 for it.
+// is apart from 1 and 2.
 const runExitUntrustedFolder = 4
 
 // runVerdict is what the host decided about the run beside its answer.
@@ -125,24 +118,6 @@ func (t *runDenialTally) snapshot() []runPermissionDenial {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]runPermissionDenial(nil), t.denials...)
-}
-
-// runReadiness is the unmet final-readiness judgement a run ended with, or nil.
-func runReadiness(runErr error) *eventwire.FinalReadiness {
-	var readiness *agent.FinalReadinessError
-	if !errors.As(runErr, &readiness) || readiness == nil {
-		return nil
-	}
-	return &eventwire.FinalReadiness{Attempts: readiness.Attempts, Missing: append([]string(nil), readiness.Missing...)}
-}
-
-// withFailOnUnverified applies --fail-on-unverified to the exit status only;
-// the machine-readable result reports the same verdict either way.
-func (c runCompletion) withFailOnUnverified(on bool) runCompletion {
-	if on && c.unverified {
-		c.exitCode = runExitUnverified
-	}
-	return c
 }
 
 // withFolderRefusal marks a run whose edits and commands were refused because

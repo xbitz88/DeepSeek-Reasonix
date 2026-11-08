@@ -2,6 +2,7 @@ package boot
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -27,12 +28,8 @@ func (p *compactionEffectProvider) Stream(_ context.Context, req provider.Reques
 	p.mu.Lock()
 	p.reqs = append(p.reqs, req)
 	p.mu.Unlock()
-	text := p.bulk
-	if req.Summary {
-		text = "## Standing facts\n- none recorded"
-	}
 	ch := make(chan provider.Chunk, 2)
-	ch <- provider.Chunk{Type: provider.ChunkText, Text: text}
+	ch <- provider.Chunk{Type: provider.ChunkText, Text: p.bulk}
 	ch <- provider.Chunk{Type: provider.ChunkDone}
 	close(ch)
 	return ch, nil
@@ -66,7 +63,6 @@ default_model = "test-model"
 [agent]
 system_prompt = "BASE"
 compact_ratio = 0.5
-recent_keep = 2
 
 [[providers]]
 name = "test-model"
@@ -82,9 +78,6 @@ context_window = 32000
 	}
 	defer ctrl.Close()
 
-	// The constraint is the *second* user turn on purpose: the first one is
-	// pinned into the stable prefix, so only a later turn exercises the fold-
-	// region retention this test is about.
 	const constraint = "standing constraint: never change the public API"
 	for _, prompt := range []string{"start the task", constraint,
 		"keep going", "keep going", "keep going", "keep going", "keep going"} {
@@ -106,15 +99,22 @@ context_window = 32000
 		t.Fatalf("no request carried a digest; the fixture never compacted (%d requests)", len(reqs))
 	}
 
-	var found bool
+	var archive string
 	for _, m := range reqs[compacted].Messages {
 		if strings.Contains(m.Content, constraint) {
-			found = true
+			t.Fatalf("a fold retains nothing, yet the post-compaction request still carries the constraint: %s",
+				messageDigest(reqs[compacted].Messages))
+		}
+		if i := strings.Index(m.Content, "Archive: "); i >= 0 {
+			archive = strings.TrimSpace(strings.SplitN(m.Content[i+len("Archive: "):], "\n", 2)[0])
 		}
 	}
-	if !found {
-		t.Fatalf("constraint absent from the post-compaction request; the model was never told it.\nmessages=%s",
-			messageDigest(reqs[compacted].Messages))
+	if archive == "" {
+		t.Fatalf("the post-compaction request names no archive: %s", messageDigest(reqs[compacted].Messages))
+	}
+	body, err := os.ReadFile(archive)
+	if err != nil || !strings.Contains(string(body), constraint) {
+		t.Fatalf("the archive %s does not hold the constraint verbatim (%v)", archive, err)
 	}
 }
 

@@ -38,6 +38,7 @@ import (
 	"reasonix/internal/ext/plugin"
 	"reasonix/internal/ext/skill"
 	"reasonix/internal/model/billing"
+	"reasonix/internal/model/providerhealth"
 	"reasonix/internal/platform/browser"
 	"reasonix/internal/platform/gitcmd"
 	"reasonix/internal/runtime/agent"
@@ -83,6 +84,7 @@ var errNoSessionPath = errors.New("session has content but no session path; conv
 // Controller drives one chat session. Construct with New; drive with the command
 // methods; observe through the Sink passed in Options.
 type Controller struct {
+	providerHealth        providerhealth.Checker
 	composition           *compositionControl
 	compositionMutationMu sync.Mutex
 	idleObserver          func()
@@ -400,9 +402,6 @@ type Options struct {
 	ReasoningLanguage string
 	// TurnNarration is brief (default) or detailed; see config.TurnNarration.
 	TurnNarration string
-	// DisableColdResumePrune suppresses the cold-resume cache-state notice.
-	// Resume never rewrites history regardless of this flag.
-	DisableColdResumePrune bool
 	// EmbeddedDiffDetection marks a shell result whose whole output is a unified diff.
 	EmbeddedDiffDetection bool
 	// Shell is the interpreter user-invoked "!" commands run under, so /shell
@@ -490,6 +489,7 @@ func New(opts Options) *Controller {
 	if c.executor != nil {
 		c.bindProjectionSeer(c.deliveredNewest, c.deliveredSees)
 	}
+	c.policy.RepoPrograms = c.repoPrograms
 	c.approval.onGrantChange = func() { go c.persistSessionGrants() }
 	c.restoreSessionGrants(opts.SessionPath)
 	c.adoptSessionResources(opts)
@@ -682,7 +682,7 @@ const ManagedConfigWriteApprovalTool = "config_write"
 
 // planApprovedMessage is the follow-up turn sent once the user approves a plan —
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
-const planApprovedMessage = "Plan approved — plan mode is off. Implement the plan now. The ordinary writer fallback is approved for this execution turn; explicit ask/deny rules and forced fresh reviews still apply. Use this serial workflow: 1) mark the first sub-step in_progress with todo_write (this establishes the task list); 2) execute the sub-step; 3) call complete_step with evidence — the host then marks that sub-step completed and moves the next one to in_progress for you. Repeat 2–3 for each remaining sub-step. You don’t need another todo_write to mark steps completed; each complete_step advances the list. Sign off one sub-step at a time — never batch multiple completions."
+const planApprovedMessage = "Plan approved — plan mode is off. Implement the plan now. The ordinary writer fallback is approved for this execution turn; explicit ask/deny rules still apply. Use this serial workflow: 1) mark the first sub-step in_progress with todo_write (this establishes the task list); 2) execute the sub-step; 3) call complete_step with what is now true — the host then marks that sub-step completed and moves the next one to in_progress for you. Repeat 2–3 for each remaining sub-step. You don’t need another todo_write to mark steps completed; each complete_step advances the list. Sign off one sub-step at a time — never batch multiple completions."
 
 type preparedInvocationTurn struct {
 	composed         string

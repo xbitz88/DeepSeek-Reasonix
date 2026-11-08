@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"reasonix/internal/contract/event"
 	"reasonix/internal/state/memory"
@@ -48,6 +49,9 @@ type memoryManager struct {
 	// made the prefix diverge per project, and they need same-session freshness.
 	instructions projectionDebt
 
+	// book holds the facts the model proposed and the user has not decided on.
+	book suggestionBook
+
 	// writeMu serializes memory writes so each write+reload+swap is atomic with
 	// respect to the others. Taken OFF mu, so a read (current/drainPending) never
 	// blocks behind a write's disk I/O.
@@ -63,7 +67,7 @@ const instructionsClearedBlock = "# Instructions\n\nThis project's standing inst
 // not already have the current one. It rediscovers from disk each turn rather
 // than reading the snapshot a write left behind: an edit made past this process
 // is still an edit, and nothing announces one.
-func (m *memoryManager) owedInstructions() string {
+func (m *memoryManager) owedInstructions(unverified bool) string {
 	opts := m.current().LoadOptions()
 	if strings.TrimSpace(opts.CWD) == "" {
 		// No workspace was resolved for this session. Discovering from the
@@ -71,7 +75,7 @@ func (m *memoryManager) owedInstructions() string {
 		// sitting in, which is not this session's project.
 		return ""
 	}
-	block := memory.InstructionsBlockFor(opts)
+	block := memory.InstructionsBlockFor(opts, unverified)
 	if block == "" && m.instructions.visible(projectInstructionsTag) {
 		block = instructionsClearedBlock
 	}
@@ -118,7 +122,15 @@ func (m *memoryManager) claimAutoRemember(args json.RawMessage) bool {
 
 func (m *memoryManager) recall(query string) memory.RecallResult {
 	m.refreshDelivered()
-	result := m.current().AutoRecall(query, memory.RecallOptions{})
+	set := m.current()
+	result := set.AutoRecall(query, memory.RecallOptions{})
+	if set != nil && len(result.Hits) > 0 {
+		used := make([]memory.Memory, 0, len(result.Hits))
+		for _, hit := range result.Hits {
+			used = append(used, hit.Memory)
+		}
+		_ = set.Store.RecordUse(used, true, time.Now())
+	}
 	m.recordRecall(result)
 	m.recordDelivered(result)
 	return result
@@ -137,7 +149,8 @@ func (m *memoryManager) lastRecallResult() memory.RecallResult {
 }
 
 func newMemoryManager(set *memory.Set) memoryManager {
-	return memoryManager{set: set}
+	proactive := set.LoadOptions().Proactive
+	return memoryManager{set: set, book: suggestionBook{ask: proactive == "ask"}}
 }
 
 // memoryRecallAudit strips a recall decision to its content-free fingerprint
@@ -284,7 +297,34 @@ func (m *memoryManager) saveMemory(fact memory.Memory) (string, error) {
 	m.applyWrite(mem,
 		"Saved memory \""+fact.Name+"\": "+strings.Join(strings.Fields(fact.Description), " ")+"\n"+strings.TrimSpace(fact.Body),
 		result.Memory)
+	if err := mem.Store.MarkReviewed(result.Memory, time.Now()); err != nil {
+		return result.Path, err
+	}
 	return result.Path, nil
+}
+
+func (m *memoryManager) confirm(name string) error {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	mem := m.current()
+	if mem == nil {
+		return memory.ErrNoSuchFact
+	}
+	report, err := mem.Store.ListActive()
+	if err != nil {
+		return err
+	}
+	for _, fact := range report.Facts {
+		if fact.Name != name && fact.ID != name {
+			continue
+		}
+		now := time.Now()
+		if err := mem.Store.RecordUse([]memory.Memory{fact}, false, now); err != nil {
+			return err
+		}
+		return mem.Store.MarkReviewed(fact, now)
+	}
+	return memory.ErrNoSuchFact
 }
 
 // forget removes a saved auto-memory by name — the panel/TUI forget action, the

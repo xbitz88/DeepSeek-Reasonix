@@ -263,7 +263,7 @@ canonical transcript and installs a short **provider-visible checkpoint** only
 when the sole automatic threshold is crossed.
 
 - Each provider declares `context_window` (tokens). The only automatic trigger is
-  `agent.compact_ratio` (default **0.85**; presets 0.70 / 0.80 / 0.85; range
+  `agent.compact_ratio` (default **0.90**; presets 0.70 / 0.80 / 0.90; range
   strictly between 0 and 1).
   `triggerTokens = floor(context_window × compact_ratio)`.
 - Ratio bounds follow `CompactRatioMin` / `CompactRatioMax` in
@@ -300,15 +300,13 @@ when the sole automatic threshold is crossed.
   **prior digest + new history** into a single digest (no multi-span merge). Failure records a generation-scoped
   `blocked`/`failed` receipt; the same generation does not pay for another
   automatic summary. Manual `compress` can retry.
-- A summary cut at the output limit is retried once with a larger output cap;
-  if that is cut too, the failure keeps its typed code and records the cap.
 - Old multi-threshold keys (`soft_compact_ratio`, `tool_result_snip_ratio`,
   `compact_force_ratio`, `cold_resume_prune`, `context_editing`) are removed on
   ordinary start and ignored at runtime. Native provider tool clearing is not
   used; every provider uses the local summary checkpoint path.
-- Keep policy (`keep` / `recent_keep`) and the active tool turn remain protected
-  content. Restart restores an existing checkpoint without re-summarizing or
-  replaying timeline cards.
+- The active tool turn is the only protected content. `keep`, `recent_keep`,
+  `user_turn_keep_tokens` and `first_turn_pin_tokens` are retired and ignored.
+  Restart restores an existing checkpoint without replaying timeline cards.
 - Full history remains in the session transcript. The read-only `history` tool
   provides BM25 retrieval over sessions; new summary checkpoints do not create
   prune archives.
@@ -347,42 +345,16 @@ when the sole automatic threshold is crossed.
   See [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md) for the
   detailed implementation contract.
 
-**What survives a fold.** Verbatim, at every compaction: the system prompt, the
-first user turn when it is small enough to be a brief, **every user turn in the
-fold region that fits the retention budget**, and the recent tail. The messages
-the keep policy protects also survive, though a failure with a recorded execution
-keeps only its failure-carrying lines. Everything else is **best-effort** — it
-reaches the summarizer and survives only as well as the digest captured it.
-
-That protection has to hold across *repeated* folds, which is why a stored
-projection keeps the host's `ToolExecution` record while a provider request does
-not. `KeepErrors` classifies a failure from that record rather than from text,
-because a real `go test` log opens with `=== RUN` and no prefix match can see
-it; a projection written without the record would leave the *next* fold unable
-to classify what the current one just protected. The strip therefore belongs at
-the provider boundary — `ModelMessages` — and not at projection write time,
-where `ProjectionMessages` preserves it.
-
-User turns are held to a different standard than the work they govern. A
-constraint stated at turn 4 ("do not change the public API") exists nowhere but
-the transcript, while the code it constrains stays re-derivable from the
-workspace — so the asymmetry of loss, not the token count, decides. Retention is
-bounded rather than unconditional, because hoisting user turns without a budget
-is what padded an earlier revision's candidates past the acceptance ceiling,
-failing compaction outright instead of degrading it. One turn may spend up to
-1500 tokens and all of them together `min(8192, window×5%)`, oldest first — the
-recent tail already covers the newest turns, and an old turn has survived more
-folds than a new one. Unlike the keep policy this is not scoped to the latest
-digest, so a constraint keeps its protection across repeated compaction.
-
-A turn past those bounds folds like any other content. Prefix it with `[[keep]]`
-(keep policy `user_marked`, on by default) to hold it verbatim regardless of
-its own size.
-
-Marked turns have a budget of their own: together they may spend `window×15%`,
-newest first, and the oldest fold into the digest past it. A kept turn rides
-into every later fold, so an unbounded mark would grow what each fold carries
-until its candidate could not land under the trigger.
+**What survives a fold.** Nothing of the conversation. A fold writes the whole
+folded span, verbatim, to `fold-<hash>.md` beside the transcript and leaves one
+pointer message that names the file; the model reads it back with `read_file` or
+`grep` when it needs something. The system prompt, and the request that began a
+running turn together with the tool calls it has not yet closed, are the only
+messages a fold cannot move, because a provider rejects a transcript whose calls
+never resolve. No summary is written, no user turn is pinned, and no recent tail
+is kept. If the archive cannot be written the fold fails with a typed error; no
+digest stands in for it. A second fold waits for a tail's worth of new closed
+history, so a fold always frees more than it costs.
 
 That drop is never silent: the finished-fold notice (`compaction_telemetry`, typed
 payload) carries `user_turns_kept` and `user_turns_dropped` counts, and a committed checkpoint that had to fold one of your
@@ -561,11 +533,10 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   strategy redirects and intervention-epoch resets, never a Goal pause. Turns,
   tokens, provider requests, and active work duration remain observational when
   the corresponding budget is not configured. Positive user-selected
-  `[agent].goal_token_budget`, `max_steps`, time, and cost budgets remain
+  `[agent].goal_token_budget` and `max_steps` remain
   explicit resumable boundaries. The Goal token budget defaults to `0` (off);
   resuming a `budget_spend` pause grants a fresh slice without clearing
-  cumulative Goal statistics. `task_time_budget_minutes = 0` (and legacy
-  negative values) disables the time boundary.
+  cumulative Goal statistics.
   `/goal clear` removes the active goal. Switching into plan/normal mode clears
   the active goal in the desktop UI so the collaboration mode remains one of
   the three choices, while the underlying tool approval posture is preserved.
@@ -769,6 +740,23 @@ leave the workspace are still reported as claim violations.
 
 Declaring paths is what buys parallelism; it costs `bash` on hosts where the OS
 sandbox cannot enforce write roots.
+
+- On resume after yielding for user input, the owner-side claim record identifies
+  other sessions that claimed overlapping paths during the wait.
+- A foreign claim or incomplete history adds a persistent `workspace_claim_yielded`
+  checkpoint coverage gap alongside the model notice and completion-receipt gap.
+- A crossing observation cannot attribute watched paths or a whole-workspace
+  diff to its tool, even when files look unchanged. Unknown mutations retain
+  their `unproven_mutation` obligation.
+- The lease owner tracks observation boundaries per prepared call, including
+  child calls and optimistic calls that claim no additional paths.
+- Fresh or disjoint operations are not tainted by another waiter's repeated
+  notice, and cannot discharge the earlier operation's debt.
+
+The existing bounded claim log reports unknown coverage when a full retained
+history no longer includes the yield's mark; a short complete history is not
+treated as truncation. These facts describe cooperating lease owners, not writes
+by external processes that bypass the claim protocol.
 
 ### 3.13 Sub-agent context inheritance is explicit
 

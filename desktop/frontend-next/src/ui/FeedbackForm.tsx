@@ -8,7 +8,7 @@ import { host } from "../port/host";
 import type { AgentPort } from "../port/port";
 import { CopyButton } from "./CopyButton";
 import { StudioIcon } from "./StudioIcon";
-import { dropDraft, heldDraft, holdDraft } from "./feedbackdraft";
+import { dropDraft, heldDraft, holdDraft, rememberContact } from "./feedbackdraft";
 import { feedbackFailure, type FeedbackFailure } from "./feedbackfailure";
 import { FeedbackShot } from "./FeedbackShot";
 import { LazyMarkdown } from "./LazyMarkdown";
@@ -17,13 +17,19 @@ import { useFileDrop } from "./filedrop";
 import { listenAction } from "./listen";
 
 export const SECURITY_URL = "https://github.com/esengine/DeepSeek-Reasonix/security/policy";
-export const DISCUSSIONS_URL = "https://github.com/esengine/DeepSeek-Reasonix/discussions";
 
 const CATEGORY_LABEL: Record<FeedbackCategory, string> = {
-  bug: "问题",
-  idea: "建议",
-  question: "疑问",
-  other: "其他",
+  bug: "feedback.bug",
+  idea: "feedback.idea",
+  question: "feedback.question",
+  other: "ext.other",
+};
+
+const CATEGORY_HINT: Record<FeedbackCategory, string> = {
+  bug: "feedback.bug_hint",
+  idea: "feedback.idea_hint",
+  question: "feedback.question_hint",
+  other: "feedback.other_hint",
 };
 
 const encoder = new TextEncoder();
@@ -210,6 +216,7 @@ export function FeedbackForm({ port, pasteRoot, active, onMine, onClose, onFile,
         ...(shellMemory.length > 0 ? { memory: shellMemory } : {}),
       });
       shotEpoch.current++;
+      rememberContact(contact.trim());
       dropDraft();
       setSent(receipt);
       setPhase("sent");
@@ -232,35 +239,39 @@ export function FeedbackForm({ port, pasteRoot, active, onMine, onClose, onFile,
 
   if (phase === "sent" && sent) {
     return (
-      <div className="fbk-sent" data-stage="sent">
-        <StudioIcon name="check" />
-        <h3 ref={done} tabIndex={-1}>{t("已收到你的反馈")}</h3>
-        <p className="fbk-hint">{t("回执号是这份反馈的凭据，请留着它。我们会先看一遍，只有被登记为 GitHub 议题的内容才会公开。进展、议题链接，以及我们的回复或提问，都会出现在「我的反馈」里。")}</p>
-        {sent.underReview && <p className="fbk-hint" data-review="">{t("这份反馈正在审核中：维护者正在查看，可能会回复。")}</p>}
-        <div className="fbk-receipt">
-          <code aria-label={t("回执号")}>{sent.receipt}</code>
-          <CopyButton text={sent.receipt} label={t("复制回执号")} />
+      <div className="fbs-sent" data-stage="sent">
+        <span className="fbs-sent-mark"><StudioIcon name="check" /></span>
+        <h3 ref={done} tabIndex={-1}>{t("feedback.your_feedback_was_received")}</h3>
+        <div className="fbs-receipt">
+          <code aria-label={t("feedback.receipt_number")}>{sent.receipt}</code>
+          <CopyButton text={sent.receipt} iconOnly label={t("feedback.copy_receipt_number")} />
         </div>
+        <p className="fbs-sent-note">{t("feedback.keep_the_receipt_number_it")}</p>
+        {sent.underReview && <p className="fbs-sent-note" data-review="">{t("feedback.this_report_is_under_review")}</p>}
         {sent.redacted && (
           <p className="fbk-note" data-tone="info">
             <StudioIcon name="shield" />
-            {t("你的文字里有看起来像密钥的内容，已在发出前打码。")}
+            {t("feedback.text_in_your_report_that")}
           </p>
         )}
-        <div className="fbk-acts">
-          <button className="act" data-primary data-action="feedback.mine" onClick={onMine}>{t("查看我的反馈")}</button>
-          <button className="act" data-action="feedback.another" onClick={again}>{t("再写一条")}</button>
-          <button className="act" data-action="feedback.close" onClick={onClose}>{t("关闭")}</button>
+        <div className="fbs-sent-acts">
+          <button type="button" className="fbs-btn" data-action="feedback.mine" onClick={onMine}>{t("feedback.view_my_feedback")}</button>
+          <button type="button" className="fbs-btn" data-ghost="" data-action="feedback.another" onClick={again}>{t("feedback.write_another")}</button>
         </div>
       </div>
     );
   }
 
   const room = limits ? limits.images - shots.length : 0;
+  const security = (
+    <a href={SECURITY_URL} data-action="feedback.link" onClick={(e) => { e.preventDefault(); onFile(SECURITY_URL); }}>
+      {t("feedback.report_it_privately_under_the")}
+    </a>
+  );
 
   return (
     <form
-      className="fbk-form"
+      className="fbs-form"
       ref={zone}
       data-over={over ? "" : undefined}
       aria-busy={sending}
@@ -272,113 +283,66 @@ export function FeedbackForm({ port, pasteRoot, active, onMine, onClose, onFile,
         void send();
       }}
     >
-      <section className="fbk-notice" aria-labelledby="fbk-public-t">
-        <StudioIcon name="warning" />
-        <div>
-          <h3 id="fbk-public-t">{t("只有被我们登记为议题的反馈才会公开")}</h3>
-          <p>{t("如果登记为 GitHub 议题，你的文字、昵称和截图会发布在 esengine/DeepSeek-Reasonix 仓库，任何人都看得到；不登记就不会公开。你会在这里收到回执，登记后还会看到议题链接，我们也可能在这里回复或向你提问。")}</p>
-          <p data-tone="warn">{t("请不要在文字或截图里写入密钥、账号密码、聊天记录或私有代码：一旦公开就收不回来。")}</p>
-          <p>
-            {tx("发现的是安全漏洞？请不要在这里提交，{link}。", {
-              link: (
-                <a href={SECURITY_URL} data-action="feedback.link" onClick={(e) => { e.preventDefault(); onFile(SECURITY_URL); }}>
-                  {t("按安全策略私下报告")}
-                </a>
-              ),
-            })}
-          </p>
-          <p>
-            {tx("建议、想法和提问放在讨论区：{link}。bug 和错误请用下面的发送。", {
-              link: (
-                <a href={DISCUSSIONS_URL} data-action="feedback.link" onClick={(e) => { e.preventDefault(); onFile(DISCUSSIONS_URL); }}>
-                  {t("想法与讨论")}
-                </a>
-              ),
-            })}
-          </p>
-        </div>
-      </section>
-
       {envFailure && (
         <div className="fbk-note" role="alert" data-tone="error">
           <StudioIcon name="warning" />
           <span>{envFailure.message}</span>
-          <button type="button" className="btn sm" data-action="feedback.retry-env" onClick={load}>{t("重试")}</button>
+          <button type="button" className="btn sm" data-action="feedback.retry-env" onClick={load}>{t("common.retry")}</button>
         </div>
       )}
 
-      <fieldset className="fbk-fields" disabled={sending || !env}>
-        <legend className="sr-only">{t("反馈内容")}</legend>
+      <fieldset className="fbs-fields" disabled={sending || !env}>
+        <legend className="sr-only">{t("feedback.feedback_details")}</legend>
 
-        <div className="fbk-cats" role="radiogroup" aria-label={t("反馈类别")}>
+        <div className="fbs-cats" role="radiogroup" aria-label={t("feedback.feedback_category")}>
           {FEEDBACK_CATEGORIES.map((c) => (
-            <label key={c} className="fbk-cat">
-              <input type="radio" name="fbk-category" checked={category === c} onChange={() => setCategory(c)} data-action="feedback.category" data-value={c} />
-              <span>{t(CATEGORY_LABEL[c])}</span>
+            <label key={c} className="fbs-cat" data-on={category === c ? "" : undefined}>
+              <input className="sr-only" type="radio" name="fbk-category" aria-label={t(CATEGORY_LABEL[c])} checked={category === c} onChange={() => setCategory(c)} data-action="feedback.category" data-value={c} />
+              <b>{t(CATEGORY_LABEL[c])}</b>
+              <small>{t(CATEGORY_HINT[c])}</small>
             </label>
           ))}
         </div>
 
-        <div className="fbk-field">
-          <div className="fbk-labelrow">
-            <label className="fbk-label" htmlFor="fbk-body">{t("发生了什么？")}</label>
-            <button type="button" className="fbk-previewtoggle" aria-pressed={preview} disabled={!body.trim()} onClick={() => setPreview((v) => !v)} data-action="feedback.preview">
-              {t(preview ? "编辑" : "预览")}
+        <div className="fbs-field">
+          <div className="fbs-labelrow">
+            <label className="fbs-label" htmlFor="fbk-body">{t("feedback.what_happened")}</label>
+            <button type="button" className="fbs-link" aria-pressed={preview} disabled={!body.trim()} onClick={() => setPreview((v) => !v)} data-action="feedback.preview">
+              {t(preview ? "common.edit" : "common.preview")}
             </button>
           </div>
           {preview ? (
             <>
-              <div className="fbk-preview" aria-label={t("正文预览")} role="region"><LazyMarkdown text={body} images={false} /></div>
-              <span className="fbk-count">{t("公开的议题会把原文放在代码块里，原样显示。")}</span>
+              <div className="fbs-preview" aria-label={t("feedback.body_preview")} role="region"><LazyMarkdown text={body} images={false} /></div>
+              <span className="fbs-hint">{t("feedback.a_public_issue_shows_your")}</span>
             </>
           ) : (
             <>
               <textarea
                 id="fbk-body"
                 ref={field}
+                className="fbs-body"
                 data-action="feedback.body"
                 value={body}
-                rows={6}
-                placeholder={t("描述你遇到的情况，或你希望它怎样。")}
+                rows={5}
+                placeholder={t("feedback.describe_what_you_ran_into")}
                 aria-invalid={problem === "body-long" ? true : undefined}
                 aria-describedby="fbk-count"
                 onChange={(e) => setBody(e.target.value)}
               />
-              <span id="fbk-count" className="fbk-count" data-over={problem === "body-long" ? "" : undefined}>
-                {t("{n} / {max} 字节", { n: bytes.toLocaleString(), max: (limits?.bodyBytes ?? 0).toLocaleString() })}
-              </span>
+              <div className="fbs-under">
+                <span className="fbs-public"><b>{t("feedback.it_becomes_public_only_if")}</b>{t("feedback.do_not_put_secrets_passwords")}</span>
+                <span id="fbk-count" className="fbs-count" data-over={problem === "body-long" ? "" : undefined}>
+                  {t("feedback.n_max_bytes", { n: bytes.toLocaleString(), max: (limits?.bodyBytes ?? 0).toLocaleString() })}
+                </span>
+              </div>
             </>
           )}
         </div>
 
-        <div className="fbk-row">
-          <label className="fbk-field">
-            <span className="fbk-label">{t("昵称（登记为议题时公开）")}</span>
-            <input
-              data-action="feedback.name"
-              value={name}
-              autoComplete="nickname"
-              aria-invalid={problem === "name-long" ? true : undefined}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <span className="fbk-hint">{t("如果登记为议题，会显示为「由 {name} 提交」。用昵称即可，不必真名。", { name: name.trim() || "…" })}</span>
-          </label>
-          <label className="fbk-field">
-            <span className="fbk-label">{t("联系方式（可选，私密）")}</span>
-            <input
-              data-action="feedback.contact"
-              value={contact}
-              autoComplete="off"
-              aria-invalid={problem === "contact-long" ? true : undefined}
-              onChange={(e) => setContact(e.target.value)}
-            />
-            <span className="fbk-hint">{t("邮箱或 QQ。只有维护者看得到，绝不会出现在 GitHub 上。")}</span>
-          </label>
-        </div>
-
-        <div className="fbk-field">
-          <span className="fbk-label" id="fbk-shots-t">{t("截图（可选，登记为议题时公开）")}</span>
-          <div className="fbk-drop" role="group" aria-labelledby="fbk-shots-t">
+        <div className="fbs-field">
+          <span className="sr-only" id="fbk-shots-t">{t("feedback.screenshots_optional_public_if_filed")}</span>
+          <div className="fbs-shots" role="group" aria-labelledby="fbk-shots-t">
             {shots.length > 0 && (
               <ul className="fbk-shots">
                 {shots.map((s) => (
@@ -386,22 +350,14 @@ export function FeedbackForm({ port, pasteRoot, active, onMine, onClose, onFile,
                 ))}
               </ul>
             )}
-            <div className="fbk-drop-line">
-              <button type="button" className="btn sm" data-action="feedback.shot.pick" disabled={room <= 0} onClick={() => picker.current?.click()}>
-                <StudioIcon name="plus" />
-                {t("添加截图…")}
+            {host().capturesWindow() && (
+              <button ref={captureButton} type="button" className="fbs-btn" data-action="feedback.shot.capture" disabled={room <= 0 || capture === "taking"} onClick={() => void takeWindow()}>
+                <StudioIcon name="image" />{t("feedback.capture_this_window")}
               </button>
-              {host().capturesWindow() && (
-                <button ref={captureButton} type="button" className="btn sm" data-action="feedback.shot.capture" disabled={room <= 0 || capture === "taking"} onClick={() => void takeWindow()}>
-                  {t("截取当前窗口")}
-                </button>
-              )}
-              <span className="fbk-hint">
-                {limits
-                  ? t("也可以直接粘贴或拖进来。PNG 或 JPEG，最多 {n} 张，每张不超过 {size} MB，较大的图会自动缩小。", { n: limits.images, size: megabytes(limits.uploadBytes) })
-                  : ""}
-              </span>
-            </div>
+            )}
+            <button type="button" className="fbs-btn" data-ghost="" data-action="feedback.shot.pick" disabled={room <= 0} onClick={() => picker.current?.click()}>
+              <StudioIcon name="plus" />{t("feedback.add_screenshots")}
+            </button>
             <input
               ref={picker}
               className="sr-only"
@@ -409,7 +365,7 @@ export function FeedbackForm({ port, pasteRoot, active, onMine, onClose, onFile,
               accept="image/png,image/jpeg"
               multiple
               tabIndex={-1}
-              aria-label={t("选择截图文件")}
+              aria-label={t("feedback.choose_screenshot_files")}
               data-action="feedback.shot.pick"
               onChange={(e) => {
                 void add([...(e.target.files ?? [])]);
@@ -417,12 +373,9 @@ export function FeedbackForm({ port, pasteRoot, active, onMine, onClose, onFile,
               }}
             />
           </div>
-          {host().capturesWindow() && (
-            <span className="fbk-hint">
-              {capture === "failed" ? t("没能截取窗口，请改用「添加截图…」。") : t("「截取当前窗口」的图会包含窗口里看到的内容（钱包余额、会话等），发送前可在上方删除。")}
-            </span>
-          )}
-          <span className="fbk-hint" data-tone="warn">{t("如果这份反馈被登记为公开议题，截图会和文字一起公开。发送前请确认没有露出密钥、聊天记录或私有代码。")}</span>
+          <span className="fbs-hint">{limits ? t("feedback.you_can_also_paste_or", { n: limits.images, size: megabytes(limits.uploadBytes) }) : ""}</span>
+          {capture === "failed" && <span className="fbs-hint" role="alert" data-tone="error">{t("feedback.could_not_capture_the_window")}</span>}
+          <p className="fbs-warn">{t("feedback.screenshots_show_what_the_window_shows")}</p>
           {refused.length > 0 && (
             <ul className="fbk-refused" role="status">
               {refused.map((r, i) => (
@@ -431,72 +384,106 @@ export function FeedbackForm({ port, pasteRoot, active, onMine, onClose, onFile,
             </ul>
           )}
         </div>
+
+        <div className="fbs-row">
+          <label className="fbs-field">
+            <span className="fbs-label">{t("feedback.nickname_public_if_filed_as")}</span>
+            <input
+              className="fbs-input"
+              data-action="feedback.name"
+              value={name}
+              autoComplete="nickname"
+              aria-invalid={problem === "name-long" ? true : undefined}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <span className="fbs-hint">{t("feedback.if_it_is_filed_as", { name: name.trim() || "…" })}</span>
+          </label>
+          <label className="fbs-field">
+            <span className="fbs-label">{t("feedback.contact_optional_private")}</span>
+            <input
+              className="fbs-input"
+              data-action="feedback.contact"
+              value={contact}
+              autoComplete="off"
+              aria-invalid={problem === "contact-long" ? true : undefined}
+              onChange={(e) => setContact(e.target.value)}
+            />
+            <span className="fbs-hint">{t("feedback.email_or_qq_only_the")}</span>
+          </label>
+        </div>
       </fieldset>
 
       {env && (
-        <section className="fbk-env" aria-labelledby="fbk-env-t">
-          <h3 id="fbk-env-t">{t("随反馈一起发送的环境信息")}</h3>
-          <dl>
-            <dt>{t("版本")}</dt>
-            <dd>{env.env.version}{env.env.commit ? ` (${env.env.commit})` : ""}</dd>
-            <dt>{t("系统")}</dt>
-            <dd>{systemLabel(env.env.os, env.env.osVersion, env.env.arch)}</dd>
-            <dt>{t("入口")}</dt>
-            <dd>{env.env.surface}</dd>
-            <dt>{t("语言")}</dt>
-            <dd>{env.env.locale}</dd>
-            <dt>{t("渠道")}</dt>
-            <dd>{env.env.channel}</dd>
-            <dt>{t("模型服务")}</dt>
-            <dd>{env.env.providerKind}</dd>
-            <dt>{t("内存")}</dt>
-            <dd>
-              {memoryLines([...shellMemory, ...(env.env.memory ?? [])]).map((line) => <div key={line}>{line}</div>)}
-            </dd>
-          </dl>
-          <p className="fbk-hint">{t("只读。不包含密钥、地址或任何文件内容。内存一项只有进程类型和上面这些数字，用来判断是哪一部分占用高。")}</p>
-          {host().revealsLogs() && (
-            <div className="fbk-logs">
-              <button
-                type="button"
-                className="btn sm"
-                data-action="feedback.logs"
-                onClick={() => {
-                  setLogsFailed(false);
-                  void host().revealLogs().then((why) => setLogsFailed(why !== null));
-                }}
-              >
-                {t("打开日志文件夹")}
-              </button>
-              <p className="fbk-hint">{t("维护者向你要日志时，打开这个文件夹，把最新的 shell.log 和 host.log 发给我们。发之前可以先自己看一眼。")}</p>
-              {logsFailed && <p className="fbk-hint" role="alert" data-tone="error">{t("无法打开日志文件夹")}</p>}
-            </div>
-          )}
+        <section className="fbs-env" aria-labelledby="fbk-env-t">
+          <details>
+            <summary>
+              {t("feedback.sent_along_version_and_system", { version: `Studio ${env.env.version}`, system: systemLabel(env.env.os, env.env.osVersion, env.env.arch) })}
+            </summary>
+            <h3 id="fbk-env-t" className="sr-only">{t("feedback.environment_sent_with_your_report")}</h3>
+            <dl>
+              <dt>{t("common.version")}</dt>
+              <dd>{env.env.version}{env.env.commit ? ` (${env.env.commit})` : ""}</dd>
+              <dt>{t("common.system")}</dt>
+              <dd>{systemLabel(env.env.os, env.env.osVersion, env.env.arch)}</dd>
+              <dt>{t("feedback.surface")}</dt>
+              <dd>{env.env.surface}</dd>
+              <dt>{t("common.language")}</dt>
+              <dd>{env.env.locale}</dd>
+              <dt>{t("feedback.channel")}</dt>
+              <dd>{env.env.channel}</dd>
+              <dt>{t("common.model_services")}</dt>
+              <dd>{env.env.providerKind}</dd>
+              <dt>{t("feedback.memory")}</dt>
+              <dd>
+                {memoryLines([...shellMemory, ...(env.env.memory ?? [])]).map((line) => <div key={line}>{line}</div>)}
+              </dd>
+            </dl>
+            <p className="fbs-hint">{t("feedback.read_only_it_holds_no")}</p>
+            {host().revealsLogs() && (
+              <div className="fbs-logs">
+                <button
+                  type="button"
+                  className="fbs-btn"
+                  data-ghost=""
+                  data-action="feedback.logs"
+                  onClick={() => {
+                    setLogsFailed(false);
+                    void host().revealLogs().then((why) => setLogsFailed(why !== null));
+                  }}
+                >
+                  {t("feedback.open_logs_folder")}
+                </button>
+                <p className="fbs-hint">{t("feedback.when_a_maintainer_asks_for")}</p>
+                {logsFailed && <p className="fbs-hint" role="alert" data-tone="error">{t("feedback.the_logs_folder_could_not")}</p>}
+              </div>
+            )}
+          </details>
         </section>
       )}
 
-      <div className="fbk-foot">
-        {failure && (
-          <div className="fbk-note" role="alert" data-tone="error" data-code={failure.code}>
-            <StudioIcon name="warning" />
-            <span>{failure.message}</span>
-            {failure.code === FEEDBACK_CODE.duplicate && (
-              <button type="button" className="btn sm" data-action="feedback.mine" onClick={onMine}>{t("查看我的反馈")}</button>
-            )}
-            {(failure.code === FEEDBACK_CODE.disabled || failure.code === FEEDBACK_CODE.unavailable) && (
-              <button type="button" className="btn sm" data-action="feedback.link" onClick={() => onFile(FEEDBACK_REPO_ISSUES + "new/choose")}>
-                {t("去 GitHub")}
-              </button>
-            )}
-          </div>
-        )}
-
-        <div className="fbk-acts">
-          <button className="act" type="submit" ref={submit} data-primary disabled={problem !== "" || sending}>
-            {t(sending ? "正在发送…" : failure?.retry === "same" ? "重试发送" : "发送反馈")}
-          </button>
-          <button className="act" type="button" data-action="feedback.close" onClick={onClose}>{t("取消")}</button>
+      {failure && (
+        <div className="fbk-note" role="alert" data-tone="error" data-code={failure.code}>
+          <StudioIcon name="warning" />
+          <span>{failure.message}</span>
+          {failure.code === FEEDBACK_CODE.duplicate && (
+            <button type="button" className="btn sm" data-action="feedback.mine" onClick={onMine}>{t("feedback.view_my_feedback")}</button>
+          )}
+          {(failure.code === FEEDBACK_CODE.disabled || failure.code === FEEDBACK_CODE.unavailable) && (
+            <button type="button" className="btn sm" data-action="feedback.link" onClick={() => onFile(FEEDBACK_REPO_ISSUES + "new/choose")}>
+              {t("feedback.go_to_github")}
+            </button>
+          )}
         </div>
+      )}
+
+      <div className="fbs-foot">
+        <span className="fbs-security">{tx("feedback.security_issues_go", { link: security })}</span>
+        <span className="fbs-fill" />
+        <button className="fbs-btn" type="button" data-ghost="" data-action="feedback.close" onClick={onClose}>{t("common.cancel")}</button>
+        <button className="fbs-btn" type="submit" ref={submit} data-primary="" disabled={problem !== "" || sending}>
+          <StudioIcon name="send" />
+          {t(sending ? "common.sending" : failure?.retry === "same" ? "feedback.retry_sending" : "common.send")}
+        </button>
       </div>
     </form>
   );

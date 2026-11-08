@@ -105,6 +105,19 @@ func TestServeRejectsUnknownAuthMode(t *testing.T) {
 	}
 }
 
+func TestServeRefusesNoAuthOnAReachableAddress(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	errOut := captureStderr(t, func() {
+		if rc := runServe([]string{"--auth", "none", "--addr", "0.0.0.0:0"}, "v1.20.0"); rc != 2 {
+			t.Fatalf("serve --auth none on 0.0.0.0 rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "--allow-open-network") {
+		t.Fatalf("stderr = %q, want the refusal to name --allow-open-network", errOut)
+	}
+}
+
 func TestServePasswordAuthRequiresPasswordMaterial(t *testing.T) {
 	isolateCLIConfigHome(t)
 
@@ -113,7 +126,7 @@ func TestServePasswordAuthRequiresPasswordMaterial(t *testing.T) {
 			t.Fatalf("serve --auth password without password rc = %d, want 1", rc)
 		}
 	})
-	if !strings.Contains(errOut, "auth mode password requires --password or serve.password_hash") {
+	if !strings.Contains(errOut, "auth mode password requires --password-file, --password or serve.password_hash") {
 		t.Fatalf("serve --auth password stderr = %q, want password material validation", errOut)
 	}
 }
@@ -687,7 +700,7 @@ func TestConfigCompactRatioQueryReportsBuiltInDefault(t *testing.T) {
 			t.Fatalf("config compact-ratio query rc = %d, want 0", rc)
 		}
 	})
-	if out != "compact_ratio = 85% (built-in default)\n" {
+	if out != "compact_ratio = 90% (built-in default)\n" {
 		t.Fatalf("config compact-ratio query output = %q", out)
 	}
 }

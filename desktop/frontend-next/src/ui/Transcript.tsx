@@ -1,11 +1,12 @@
-import { Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
+import { Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
 import { t } from "../i18n";
+import { useEarlierFold } from "./EarlierFold";
 import type { Item, Waiting } from "../state/session";
 import type { ExtensionSurface } from "../port/wire";
 import type { AgentPort, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindScope } from "../port/port";
 import { Hero } from "./Hero";
 import { Await } from "./Await";
-import { ToolCard } from "./cards/ToolCard";
+import { ToolCard } from "./cards/ToolCardSafe";
 import { Boundary } from "./Boundary";
 import { LazyChart } from "./chart/LazyChart";
 import { chartOfTool } from "./chart/spec";
@@ -26,10 +27,12 @@ import { NoticeCard } from "./cards/NoticeCard";
 import { RememberCard } from "./cards/RememberCard";
 import { ExtensionCard } from "./cards/ExtensionCard";
 import { toolChangedFile, toolFailed } from "./cards/outcome";
+import { foldEarlier } from "./activityEarlier";
+import { ActivityHead, staggered } from "./ActivityHead";
 import { NewAnswerLine, useNewAnswerAnchor } from "./NewAnswerLine";
-import { drawn, foldStats, repeatedSpeakers, sameMembers, transcriptRows, type Shown } from "./turnrows";
+import { WorkLanes } from "./cards/SubagentGroup";
+import { drawn, eachCall, foldStats, repeatedSpeakers, sameMembers, transcriptRows, type Shown } from "./turnrows";
 import { BroughtResults } from "./BroughtResults";
-import { ReceiptSlot } from "./ReceiptSlot";
 import { WorkFold } from "./WorkFold";
 import { opensTurn, useBlocks, useBlockKeys } from "./blocks";
 import { useHistoryAnchor, useOlderPageIntent } from "./useHistoryAnchor";
@@ -39,7 +42,7 @@ import { Rail, type RailMark } from "./Rail";
 import { railMarks } from "./railmarks";
 import { StudioIcon } from "./StudioIcon";
 import { LiveWork, useStartsOpen } from "../state/foldpref";
-import { landingBox, renderedBox, useFindLanding, useFindPaint } from "./findland";
+import { glide, landingBox, renderedBox, useFindLanding, useFindPaint } from "./findland";
 import { ScrollJump } from "./ScrollJump";
 import { landing as landingOf, type Direction } from "./jumpreach";
 import { chunkText, heldBlocks, type Held } from "./chunk_text";
@@ -52,10 +55,10 @@ interface Props {
   waiting: Waiting;
   scroll: RefObject<HTMLDivElement | null>;
   hidden: boolean;
-  // A request from outside to show one tool call — the run graph asking for the
-  // node you clicked. The nonce, not the id, is what makes asking twice land
-  // twice; null while nothing has been asked for.
-  focus: { call: string; n: number } | null;
+  // A request from outside to show one tool call or row — the run graph asking for
+  // the node you clicked, the plan strip for its card. The nonce, not the id, is
+  // what makes asking twice land twice; null while nothing has been asked for.
+  focus: { call: string; n: number } | { item: string; n: number } | null;
   find?: { id: string; nth: number; n: number; mode?: { regex?: boolean; caseSensitive?: boolean } } | null;
   query?: string;
   onApprove: (itemId: string, id: string, v: ApprovalVerdict) => Promise<void>;
@@ -64,8 +67,6 @@ interface Props {
   onAnswer: (itemId: string, id: string, answers: { questionId: string; selected: string[]; value?: Record<string, unknown> }[]) => Promise<void>;
   onForget: (itemId: string, name: string) => void;
   onSettings?: (at?: string) => void;
-  // Takes a still-queued line back. Only rows the kernel has given an
-  // item id can offer it, and only until the turn reads them.
   onExtInvoke: (name: string) => void;
   // Views published against a tool call, keyed by anchor. A card looks itself
   // up here rather than being handed one, so an arriving takeover repaints the
@@ -76,12 +77,14 @@ interface Props {
   reply?: ReplyActions;
   // Rewriting a message: the turn it takes back, and what to send instead.
   onResend?: (turn: number, text: string) => Promise<void>;
+  onWithdraw?: (itemId: string) => void | Promise<void>;
   onExtSubmit: (pluginId: string, surfaceId: string, values: Record<string, unknown>) => void | Promise<void>;
   // The checkpoint each user card can return to, keyed by item id. Absent for a
   // card whose turn could not be matched — see state/checkpoints.
   needsProject: boolean;
   onOpenProject: () => void;
   onKeepHere: () => void;
+  onSuggest?: (text: string) => void;
   foldWork?: boolean;
   turnRunning?: boolean;
   scope?: string;
@@ -100,7 +103,7 @@ interface Props {
   brought?: { ids: string[]; bring: (id: string) => void; dismiss: (id: string) => void };
 }
 
-export function Transcript({ items, port, historyPaging, entering, onEntered, brought, revision, waiting, scroll, hidden, focus, find, query, onApprove, onFullAccess, onPlan, onAnswer, onForget, onSettings, onExtInvoke, onExtSubmit, reply, onResend, takeovers = {}, checkpoints, onPrepareRewind, onCommitRewind, onPrepareFileRevert, onCommitFileRevert, needsProject, onOpenProject, onKeepHere, foldWork = false, turnRunning = false, scope = "" }: Props) {
+export function Transcript({ items: every, port, historyPaging, entering, onEntered, brought, revision, waiting, scroll, hidden, focus, find, query, onApprove, onFullAccess, onPlan, onAnswer, onForget, onSettings, onExtInvoke, onExtSubmit, reply, onResend, onWithdraw, takeovers = {}, checkpoints, onPrepareRewind, onCommitRewind, onPrepareFileRevert, onCommitFileRevert, needsProject, onOpenProject, onKeepHere, onSuggest, foldWork = false, turnRunning = false, scope = "" }: Props) {
   // A block the selection touches must not leave the DOM. Unmounting the node a
   // selection is anchored to makes the browser remap that selection onto
   // whatever is still mounted — which reads as "I selected up there and the
@@ -108,6 +111,7 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
   // neither end inside it, is held as plain text from the data: mounting its
   // cards in one synchronous render is what made a long drag freeze.
   const [held, setHeld] = useState<Map<number, Held>>(new Map());
+  const { items, bar: earlierBar } = useEarlierFold(every);
 
   // Stick to the bottom only while the reader is already there; scrolling up
   // must not be yanked back by incoming frames.
@@ -327,8 +331,7 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
       const ready = inner.querySelector<HTMLElement>(selector);
       if (ready && then?.(ready, root)) return;
       const chunk = inner.querySelectorAll<HTMLElement>(".chunk")[block];
-      if (ready) root.scrollTop = topOf(renderedBox(ready)) - clear;
-      else if (chunk) root.scrollTop = topOf(chunk) + into * chunk.offsetHeight - clear;
+      if (!ready && chunk) root.scrollTop = topOf(chunk) + into * chunk.offsetHeight - clear;
       const settle = (tries: number, last = NaN) => {
         if (mine !== landing.current || !inner.isConnected) return;
         const found = inner.querySelector<HTMLElement>(selector);
@@ -348,7 +351,8 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
         }
         if (tries > 0) requestAnimationFrame(() => settle(tries - 1));
       };
-      requestAnimationFrame(() => settle(20));
+      if (ready) glide(root, topOf(renderedBox(ready)) - clear, () => mine === landing.current && inner.isConnected, () => settle(20));
+      else requestAnimationFrame(() => settle(20));
     },
     [scroll, flow],
   );
@@ -429,9 +433,10 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
     const at = new Map<string, { block: number; into: number }>();
     blocks.forEach((block, b) =>
       block.forEach((it, i) => {
-        if (it.t !== "tool") return;
         const into = block.length > 1 ? i / block.length : 0;
-        for (const id of [it.tool.id, ...it.children.map((c) => c.id)]) if (id) at.set(id, { block: b, into });
+        at.set(`[data-item="${CSS.escape(it.id)}"]`, { block: b, into });
+        if (it.t !== "tool") return;
+        for (const id of [it.tool.id, ...it.children.map((c) => c.id)]) if (id) at.set(`[data-call="${CSS.escape(id)}"]`, { block: b, into });
       }),
     );
     return at;
@@ -444,9 +449,10 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
   useEffect(() => {
     if (hidden || !focus || landed.current === focus.n) return;
     landed.current = focus.n;
-    const where = callBlock.get(focus.call);
-    revealNested(focus.call);
-    if (where) land(where.block, where.into, `[data-call="${CSS.escape(focus.call)}"]`);
+    const selector = "item" in focus ? `[data-item="${CSS.escape(focus.item)}"]` : `[data-call="${CSS.escape(focus.call)}"]`;
+    if ("call" in focus) revealNested(focus.call);
+    const where = callBlock.get(selector);
+    if (where) land(where.block, where.into, selector);
   }, [hidden, focus, callBlock, land]);
 
   // Drawn is spent. Not "the animation finished" — reduced motion runs none,
@@ -465,7 +471,7 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
 
   const bring = brought?.bring;
   const onBring = useMemo(() => (bring ? (id: string) => { bring(id); resume(); } : undefined), [bring, resume]);
-  const rowProps = { onBring, owed, echoes, port, onApprove, onFullAccess, onPlan, onAnswer, onForget, onSettings, onExtInvoke, takeovers, onExtSubmit, onPrepareRewind, onCommitRewind, onPrepareFileRevert, onCommitFileRevert, reply, onResend };
+  const rowProps = { onBring, owed, echoes, port, onApprove, onFullAccess, onPlan, onAnswer, onForget, onSettings, onExtInvoke, takeovers, onExtSubmit, onPrepareRewind, onCommitRewind, onPrepareFileRevert, onCommitFileRevert, reply, onResend, onWithdraw };
 
   const marks = railMarks(blocks, (id) => checkpoints.get(id)?.files ?? 0);
 
@@ -482,8 +488,9 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
       {/* 空转录是「窗口的空白」，壁纸该在那儿；一有内容它就是内容了。 */}
       <div className="flow" ref={flow} data-empty={items.length === 0 && !historyPaging?.hasMore && !historyPaging?.busy && !historyPaging?.failed ? "" : undefined}>
         <HistoryPageControl paging={historyPaging} load={loadOlder} />
+        {earlierBar}
         {items.length === 0 && !historyPaging?.hasMore && !historyPaging?.busy && !historyPaging?.failed && (
-          <Hero needsProject={needsProject} onOpen={onOpenProject} onKeep={onKeepHere} />
+          <Hero needsProject={needsProject} onOpen={onOpenProject} onKeep={onKeepHere} onSuggest={onSuggest} />
         )}
         {blocks.map((block, i) => (
           <Block
@@ -501,6 +508,7 @@ export function Transcript({ items, port, historyPaging, entering, onEntered, br
           />
         ))}
         {live && <Row it={live} {...rowProps} cp={checkpoints.get(live.id)} />}
+        {every.filter((it) => it.t === "user" && it.pending && it.queued === "steer").map((it) => <Row key={it.id} it={it} {...rowProps} />)}
         {brought && <BroughtResults items={items} ids={brought.ids} onDismiss={brought.dismiss} takeovers={takeovers} onExtInvoke={onExtInvoke} onPrepareFileRevert={onPrepareFileRevert} onCommitFileRevert={onCommitFileRevert} />}
         {waiting.ttftSince && <Await since={waiting.ttftSince} retry={waiting.retry} />}
         <div ref={end} className="flow-end" aria-hidden="true" />
@@ -577,13 +585,13 @@ const Block = memo(function Block({
           {...rowProps}
           cp={checkpoints.get(row.item.id)}
           settled={!row.activity?.some((item) => item.t === "tool" && item.running)}
-          afterAnswer={row.activity || deliveries.has(row.item.id) ? <>{delivery(row.item.id)}{row.activity && <ActivityGroup items={row.activity} checkpoints={checkpoints} opened={opened} onOpened={setOpened} {...rowProps} />}</> : undefined}
+          afterAnswer={row.activity || deliveries.has(row.item.id) ? <>{delivery(row.item.id)}{row.activity && <WorkLanes items={row.activity} port={rowProps.port} draw={(work) => <ActivityGroup items={work} checkpoints={checkpoints} opened={opened} onOpened={setOpened} {...rowProps} />} />}</> : undefined}
         />
       </Fragment>
     ) : (
       <Fragment key={`activity:${row.activity[0].id}`}>
         {row.activity.map((item) => <Fragment key={item.id}>{delivery(item.id)}</Fragment>)}
-        <ActivityGroup items={row.activity} checkpoints={checkpoints} opened={opened} onOpened={setOpened} {...rowProps} />
+        <WorkLanes items={row.activity} port={rowProps.port} draw={(work) => <ActivityGroup items={work} checkpoints={checkpoints} opened={opened} onOpened={setOpened} {...rowProps} />} />
       </Fragment>
     );
   });
@@ -618,6 +626,7 @@ interface RowHandlers {
   onPrepareFileRevert: Props["onPrepareFileRevert"];
   reply: Props["reply"];
   onResend: Props["onResend"];
+  onWithdraw: Props["onWithdraw"];
   onCommitFileRevert: Props["onCommitFileRevert"];
 }
 
@@ -649,6 +658,9 @@ const ActivityGroup = memo(function ActivityGroup({
     [gid, onOpened],
   );
   const calls = items.reduce((count, item) => count + (item.t === "reads" ? item.tools.length : 1), 0);
+  const fold = useMemo(() => foldEarlier(items), [items]);
+  const [showEarlier, setShowEarlier] = useState(false);
+  const earlierCalls = fold.kinds.reduce((count, [, n]) => count + n, 0);
   const failures = items.reduce((count, item) => {
     if (item.t === "tool") return count + (toolFailed(item.tool) ? 1 : 0);
     if (item.t === "reads") return count + item.tools.filter(toolFailed).length;
@@ -656,18 +668,19 @@ const ActivityGroup = memo(function ActivityGroup({
   }, 0);
   return (
     <details className="activity-group" data-failed={failures ? "" : undefined} data-running={running ? "" : undefined} open={open} onToggle={(event) => event.currentTarget.open !== open && setOpen(event.currentTarget.open)}>
-      <summary>
-        <StudioIcon name={running ? "clock" : failures ? "warning" : "check"} className="activity-status-icon" />
-        <span className="activity-title">{t("执行过程")}</span>
-        {running && <span className="activity-running">{t("{n} 项运行中", { n: runs })}</span>}
-        {failures > 0 && <span className="activity-errors">{t("{n} 项失败", { n: failures })}</span>}
-        <span className="activity-count">{t("{count} 项操作", { count: calls })}</span>
-        <StudioIcon name="down" className="activity-fold-icon" />
-      </summary>
+      <ActivityHead items={items} open={open} runs={runs} failures={failures} calls={calls} />
       <div className="activity-body">
-        {items.map((item) => <Row key={item.id} it={item} activity {...rowProps} cp={checkpoints.get(item.id)} />)}
+        {fold.earlier.length > 0 && (
+          <button type="button" className="activity-earlier" data-action="activity.earlier" aria-expanded={showEarlier} onClick={() => setShowEarlier((v) => !v)}>
+            <span>{t("chat.n_earlier_steps", { n: earlierCalls })}</span>
+            <span className="activity-earlier-kinds">{fold.kinds.map(([verb, n]) => `${verb} ${n}`).join(" · ")}</span>
+            <StudioIcon name="down" />
+          </button>
+        )}
+        {staggered((showEarlier ? items : fold.recent).flatMap(eachCall), rowProps.owed).map(([item, k]) => (
+          <div key={item.id} className="step-slot" style={{ "--i": k } as CSSProperties}><Row it={item} activity {...rowProps} cp={checkpoints.get(item.id)} /></div>
+        ))}
       </div>
-      <p className="activity-note">{t("点击步骤可原位查看详情、结果或文件差异")}</p>
     </details>
   );
 });
@@ -689,7 +702,7 @@ const Row = memo(function Row({
   onAnswer,
   onExtInvoke,
   reply,
-  onResend,
+  onResend, onWithdraw,
   takeovers,
   onExtSubmit,
   cp,
@@ -719,6 +732,7 @@ const Row = memo(function Row({
           port={port}
           cp={cp}
           onResend={onResend}
+          onWithdraw={onWithdraw}
           onPrepareRewind={onPrepareRewind}
           onCommitRewind={onCommitRewind}
         />
@@ -764,7 +778,7 @@ const Row = memo(function Row({
     case "guardian":
       return <GuardianCard g={it.g} />;
     case "approval":
-      return <ApprovalCard item={it} onApprove={onApprove} onFullAccess={onFullAccess} onPlan={onPlan} />;
+      return <><ApprovalCard item={it} onApprove={onApprove} onFullAccess={onFullAccess} onPlan={onPlan} />{afterAnswer}</>;
     case "ask":
       return it.ask.questions.some(q => q.surface) ? <SurfaceCard item={it} onAnswer={onAnswer} port={port} /> : it.ask.origin ? <ElicitCard item={it} onAnswer={onAnswer} /> : <AskCard item={it} onAnswer={onAnswer} onEngage={port?.engageQuestion?.bind(port)} refine={port?.refinePrompt?.bind(port)} />;
     case "compaction":
@@ -772,8 +786,6 @@ const Row = memo(function Row({
 
     case "remember":
       return <RememberCard m={it.m} forgotten={it.forgotten} onForget={(name) => onForget(it.id, name)} />;
-    case "receipt":
-      return <ReceiptSlot r={it.r} />;
     case "worked":
       return <WorkedLine ms={it.ms} startedAt={it.startedAt} />;
     case "extension":

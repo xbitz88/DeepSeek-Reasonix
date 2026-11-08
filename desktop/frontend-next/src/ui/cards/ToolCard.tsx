@@ -7,13 +7,16 @@ import type { ExtensionSurface, Tool } from "../../port/wire";
 import type { RewindPlan, RewindResult } from "../../port/port";
 import { categoryOf, labelFor, mcpOrigin, runLabelFor } from "../icons";
 import { Sym, glyphFor } from "../Sym";
+import { activityVerb } from "../activityEarlier";
 import { GOAL_STATUS, argOf, goalUpdate, shortArgs } from "../args";
 import { Cost } from "../Cost";
 import { bytes, count, seconds, tokens } from "../../i18n/format";
 import { currentStep, parsePlan, stepDone } from "../../state/session";
 import { DiffView } from "./DiffView";
 import { BringCall } from "./BringCall";
-import { StopCall } from "./StopCall";
+import { StepWait, StopCall } from "./StopCall";
+import { stepSummary } from "./stepsum";
+import { BackgroundNote, BackgroundReading } from "./BackgroundJob";
 import { WaitNote } from "./WaitNote";
 import { Term, ToolOutput, BoundNote } from "./ToolOutput";
 import { ExtensionView } from "./ExtensionView";
@@ -41,6 +44,40 @@ function prettyArgs(args?: string): string {
 }
 
 const shortCallId = (id?: string) => id ? id.replace(/^call_/, "").slice(-8) : "—";
+
+const lastLine = (text?: string) => text?.split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
+
+// How long an activity step has run or took, in whole seconds; nothing under one.
+// A running step counts from when the kernel says it started, so a row drawn
+// late does not restart the clock; a call with no start counts from its row.
+function StepTime({ tool, running }: { tool: StateTool; running: boolean }) {
+  const drawnAt = useRef(Date.now()).current;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+  const ms = running ? Math.max(0, now - (tool.startedAt || drawnAt)) : tool.durationMs ?? 0;
+  if (ms < 1000) return null;
+  return <span className="step-sum">{t("common.n_s", { n: Math.round(ms / 1000) })}</span>;
+}
+
+// A step that turns failed under the reader shakes once; one drawn failed does not.
+function useFellInto(bad: boolean): boolean {
+  const [on, setOn] = useState(false);
+  const was = useRef(bad);
+  useEffect(() => {
+    const fell = !was.current && bad;
+    was.current = bad;
+    if (!fell) return;
+    setOn(true);
+    const id = setTimeout(() => setOn(false), 240);
+    return () => clearTimeout(id);
+  }, [bad]);
+  return on;
+}
 
 function useSettling(running: boolean): { pop: boolean; swap: boolean } {
   const [pop, setPop] = useState(false);
@@ -97,7 +134,9 @@ export function ToolCard({
   const from = mcpOrigin(shown);
   // Running and settled are two different lines: the category says what it is
   // doing now, the label says what it was once it is done.
-  const head = activity ? (from?.tool || shown) : running ? runLabelFor(shown) : labelFor(shown);
+  const verb = activityVerb(shown);
+  const bgJob = tool.execution?.state === "background_started" ? tool.execution.jobId : undefined;
+  const head = activity && bgJob ? t("chat.sent_to_background") : activity ? (from?.tool || (verb ? t(verb) : labelFor(shown))) : running ? runLabelFor(shown) : labelFor(shown);
   // A write's payload streams as arguments, and the provider only reports how
   // many characters have landed — the JSON is unparseable until the last one.
   // Showing that count is the difference between a card that is visibly filling
@@ -119,6 +158,7 @@ export function ToolCard({
   // subagent" is not a thing you can go read, "skill:security-review" is.
   const who = tool.profile?.name?.trim();
   const settling = useSettling(running);
+  const shaking = useFellInto(bad);
   // A refused call carries the same sentence twice: the kernel writes it to the
   // model as output and to the reader as an error. Rendering both prints it
   // twice, and the second copy reads like a second failure.
@@ -131,7 +171,9 @@ export function ToolCard({
   // Running is not a reason to show the arguments: the group above already says
   // the work is happening, and a call that opens itself pushes the transcript
   // around while it reads. A failure is different — that is what is being asked.
-  const start = useStartsOpen("steps", false, bad, toolChangedFile(tool));
+  // In the activity group a failure says itself in the box under its row, so
+  // the call's whole body stays folded until the reader asks for it.
+  const start = useStartsOpen("steps", false, bad && !activity, toolChangedFile(tool));
   const [touched, setOpen] = useState<boolean | null>(pinned ? true : null);
   useEffect(() => {
     if (bad) setOpen(null);
@@ -150,6 +192,10 @@ export function ToolCard({
     return registerNest(children.map((c) => c.id).filter((id): id is string => !!id), () => setOpen(true));
   }, [nestMounted, children]);
   const changes = changeCounts(tool);
+  const sum = activity && !running ? stepSummary(tool, verb, bad) : "";
+  // A host refusal says why in its own words; a command's last line of output says
+  // more than the generic error that it exited; any other tool's output is not about its failure.
+  const failLine = activity && bad ? (refusal || (tool.refusalCode && errorDetail) || (tool.execution ? lastLine(tool.output) : "") || errorDetail || tool.err || lastLine(tool.output) || "") : "";
   const activityArgs = activity ? prettyArgs(tool.args) : "";
   // A call being watched in the activity group opens to its input even with no
   // output yet: a row that cannot open is the one that looks stuck.
@@ -164,25 +210,28 @@ export function ToolCard({
     <>
       {/* 名字是给人读的，id 是给人查的。标签只在它说了名字没说的事时才占地方
           （见 tagFor），所以精确的那个字符串挂在这里，一直够得着。 */}
+      {activity && <span className="kind" aria-hidden="true"><Sym glyph={glyphFor(shown)} /></span>}
       <span className={running ? "nm shim" : "nm"} title={shown}>{head}</span>
-      {who && <span className="who" title={t("按技能 {name} 的设定运行的子代理", { name: who })}>{who}</span>}
-      {from && <span className="src" title={t("外部服务 {name} 提供的工具", { name: from.server })}>{from.server}</span>}
+      {who && <span className="who" title={t("chat.a_subagent_running_under_the", { name: who })}>{who}</span>}
+      {from && <span className="src" title={t("chat.a_tool_provided_by_the", { name: from.server })}>{from.server}</span>}
       {tag && <span className="tag" title={tagHint(tool)}>{tag}</span>}
       {arg && <span className={streaming ? "arg shim" : "arg"} title={streaming ? undefined : prettyArgs(tool.args)}>{arg}</span>}
       {changes && (
-        <span className="tool-delta" aria-label={t("新增 {added} 行，删除 {removed} 行", changes)}>
+        <span className="tool-delta" aria-label={t("chat.added_lines_added_removed_removed", changes)}>
           <b>+{changes.added}</b><i>−{changes.removed}</i>
         </span>
       )}
-      {bad && <span className="fail">{badLabel}</span>}
-      <Cost tools={[tool]} running={running} />
+      {bad && !sum && <span className="fail">{badLabel}</span>}
+      {bgJob && <BackgroundReading id={bgJob} />}
+      {sum ? <span className="step-sum">{sum}</span> : activity ? !changes && <StepTime tool={tool} running={running} /> : <Cost tools={[tool]} running={running} />}
       <span
         className="tool-state"
         data-state={running ? "running" : bad ? "failed" : "done"}
-        aria-label={t(running ? "运行中" : bad ? "失败" : "已完成")}
-        title={t(running ? "运行中" : bad ? "失败" : "已完成")}
+        data-pop={settling.pop && !bad ? "" : undefined}
+        aria-label={t(running ? "common.running" : bad ? "common.failed" : "common.done_2")}
+        title={t(running ? "common.running" : bad ? "common.failed" : "common.done_2")}
       >
-        <StudioIcon name={running ? "clock" : bad ? "warning" : "check"} />
+        {running && activity ? <i className="step-spin" /> : <StudioIcon name={running ? "clock" : bad ? (activity ? "fail" : "warning") : "check"} />}
       </span>
       {onBring && tool.id && !running && hasBody ? <BringCall onBring={onBring} /> : null}
       {hasBody && <span className="tool-fold" aria-hidden="true" />}
@@ -192,9 +241,9 @@ export function ToolCard({
     <div className="out">
       {tool.argumentNormalization && (
         <section className="activity-call-input">
-          <p>{t("参数格式已自动兼容")}</p>
+          <p>{t("chat.argument_format_automatically_normalized")}</p>
           <details>
-            <summary>{t("兼容前的原始输入")}</summary>
+            <summary>{t("chat.original_input_before_normalization")}</summary>
             <pre>{prettyArgs(tool.argumentNormalization.original)}</pre>
           </details>
         </section>
@@ -202,25 +251,25 @@ export function ToolCard({
       {activity && (
         <>
           <div className="activity-call-meta">
-            <span>{t("调用 {id}", { id: shortCallId(tool.id) })}</span>
-            <span>{t(running ? "运行中" : bad ? "失败" : "已完成")}</span>
+            <span>{t("chat.call_id", { id: shortCallId(tool.id) })}</span>
+            <span>{t(running ? "common.running" : bad ? "common.failed" : "common.done_2")}</span>
           </div>
           {activityArgs && (
             <section className="activity-call-input">
-              <header><b>{t("输入")}</b><span>JSON</span></header>
+              <header><b>{t("common.input")}</b><span>JSON</span></header>
               <pre><JsonText text={activityArgs} /></pre>
             </section>
           )}
           {running && !tool.output && !tool.err && children.length === 0 && <WaitNote args={tool.args} />}
           {activityResult && (
             <div className="activity-call-result">
-              <b>{t("结果")}</b>
+              <b>{t("chat.result")}</b>
               {tool.output && (
                 <button
                   type="button"
                   data-action="tool.copy-output"
                   onClick={() => void navigator.clipboard.writeText(tool.output ?? "").catch(() => {})}
-                >{t("复制")}</button>
+                >{t("common.copy")}</button>
               )}
             </div>
           )}
@@ -233,7 +282,7 @@ export function ToolCard({
       {takeover ? (
         <>
           <ExtensionView body={takeover.view?.body ?? []} onAction={(id) => onExtInvoke?.(id)} />
-          <div className="drawnby">{t("由 {name} 渲染", { name: takeover.pluginId })}</div>
+          <div className="drawnby">{t("chat.drawn_by_name", { name: takeover.pluginId })}</div>
         </>
       ) : (
         <>
@@ -260,7 +309,7 @@ export function ToolCard({
           )}
           {!tool.diff && !tool.outputDiff && !goal && tool.name !== "todo_write" && tool.output && !echoed && children.length === 0 && (
             <>
-              {omitted > 0 && <div className="bound">{t("此前省略了 {n} 个字符，这里只显示最近的输出", { n: count(omitted) })}</div>}
+              {omitted > 0 && <div className="bound">{t("chat.n_characters_before_this_are", { n: count(omitted) })}</div>}
               {full.note}
               <ToolOutput name={shown} text={full.text ?? ""} bound={tool.bound} id={tool.id} />
             </>
@@ -278,7 +327,7 @@ export function ToolCard({
           <div className="nest-hd">
             <i className="pip" />
             <span className="who">{nestLabel(who, tool.profile?.count, children.length)}</span>
-            <span className="prof">{t("独立上下文 · 不进主轨迹")}</span>
+            <span className="prof">{t("chat.its_own_context_stays_out")}</span>
             {ranLabel(tool.profile) && <span className="ran" title={ranLabel(tool.profile)}>{ranLabel(tool.profile)}</span>}
             {/* 委派出去那部分的账：耗时是父调用的，token 是子步骤各自留下的 */}
             <span className="rt">
@@ -315,6 +364,7 @@ export function ToolCard({
       data-call={tool.id || undefined}
       data-k={KINDED.has(categoryOf(shown)) ? categoryOf(shown) : undefined}
       data-running={running ? "" : undefined}
+      data-shake={shaking ? "" : undefined}
     >
       <div className="g">
         <Sym glyph={glyphFor(shown)} done={settling.pop && !bad} />
@@ -328,7 +378,15 @@ export function ToolCard({
         ) : (
           <div className="hl" data-swap={settling.swap ? "" : undefined}>{heading}</div>
         )}
-        {running && onStop && tool.id && <StopCall onStop={onStop} />}
+        {failLine && (
+          <div className="step-err" role="status">
+            <code>{failLine}</code>
+            {hasBody && !open && <button type="button" className="step-stop" data-action="tool.full-output" onClick={() => setOpen(true)}>{t("chat.see_full_output")}</button>}
+          </div>
+        )}
+        {running && activity && <StepWait onStop={onStop && tool.id ? onStop : undefined} quiet={!!tool.output || children.length > 0} />}
+        {running && !activity && onStop && tool.id && <StopCall onStop={onStop} />}
+        {bgJob && <BackgroundNote id={bgJob} />}
       </div>
     </div>
   );
@@ -340,7 +398,7 @@ function ToolVideos({ videos }: { videos?: NonNullable<Tool["videos"]> }) {
     <div className="tvideos">
       {videos.map((v, i) => (
         <div key={v.name + i} className="tvideo">
-          {t("视频 {name}（{detail}）已原生发送给 {model}", {
+          {t("chat.video_name_detail_sent_to", {
             name: v.name,
             detail: [bytes(v.size), v.durationMs ? seconds(v.durationMs) : ""].filter(Boolean).join(" · "),
             model: v.model,
@@ -356,8 +414,8 @@ function ToolShots({ images }: { images?: string[] }) {
   return (
     <div className="tshots">
       {images.map((src, i) => (
-        <ImagePreview key={src + i} src={src} name={t("工具截图 {n}", { n: i + 1 })} className="tshot">
-          <img src={src} alt={t("工具截图 {n}", { n: i + 1 })} loading="lazy" />
+        <ImagePreview key={src + i} src={src} name={t("chat.tool_screenshot_n", { n: i + 1 })} className="tshot">
+          <img src={src} alt={t("chat.tool_screenshot_n", { n: i + 1 })} loading="lazy" />
         </ImagePreview>
       ))}
     </div>
@@ -403,12 +461,12 @@ export function NestedCall({ tool, whole = false, read }: { tool: StateTool; who
           <div className="out">
             {full.note}
             <Term text={clipped && !all ? body.slice(0, NESTED_PREVIEW) : body.slice(0, NESTED_WHOLE_CAP)} />
-            {(whole || all) && body.length > NESTED_WHOLE_CAP && <div className="bound bad">{t("输出过长，仅显示前 200000 个字符")}</div>}
+            {(whole || all) && body.length > NESTED_WHOLE_CAP && <div className="bound bad">{t("chat.output_too_long_showing_the")}</div>}
             {clipped && (
               <div className="bound">
-                {all ? null : t("仅显示前 400 个字符")}
+                {all ? null : t("chat.showing_only_the_first_400")}
                 <button type="button" className="out-more" data-action="tool.show-all" aria-expanded={all} onClick={() => setAll(!all)}>
-                  {all ? t("收起") : t("显示全部")}
+                  {all ? t("common.collapse") : t("chat.show_all_2")}
                 </button>
               </div>
             )}
@@ -429,7 +487,7 @@ export function NestedCall({ tool, whole = false, read }: { tool: StateTool; who
 // it for the rest of the turn, the card records what it was when it was written.
 function Steps({ tool }: { tool: Tool }) {
   const steps = parsePlan(tool);
-  if (!steps?.length) return <span className="fold">{t("计划已移入右栏")}</span>;
+  if (!steps?.length) return <span className="fold">{t("chat.the_plan_is_in_the")}</span>;
   const now = currentStep(steps);
   return (
     <div className="steps">

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import type { AgentPort, PlanApprovalSettings } from "../port/port";
-import { Switch } from "./Switch";
+import { SegChoice, SettingRow } from "./SettingRow";
 
 // One switch over whether a submitted plan waits for the user's click. Off is
 // the default. On releases only that click: tool approvals, the sandbox and
@@ -20,7 +20,7 @@ export function PlanApproval({ port }: { port: AgentPort }) {
       .catch(() => setState(null));
   }, [port]);
 
-  if (!state) return <div className="empty">{t("无法读取计划批准设置。")}</div>;
+  if (!state) return <div className="empty">{t("plan.could_not_read_the_plan")}</div>;
 
   const flip = async () => {
     setBusy(true);
@@ -35,22 +35,13 @@ export function PlanApproval({ port }: { port: AgentPort }) {
   };
 
   return (
-    <div className="box">
-      <div className="lrow">
-        <span className="tx">
-          <span className="lb">{t("自动批准计划")}</span>
-          <span className="ds">{t("计划提交后不再等你点批准，直接开始执行，对话里会留下一条说明。只放行这一次点击：工具批准、沙箱和拒绝规则照常生效。默认关闭，只写在你自己的用户配置里，项目配置不能替你打开。")}</span>
-        </span>
-        <Switch
-          data-action="plan-approval.auto"
-          on={state.auto}
-          busy={busy}
-          label={t("自动批准计划")}
-          onClick={() => void flip()}
-        />
-      </div>
+    <>
+      <SettingRow id="plan-approval" title={t("settings.plan_approval")} desc={t("settings.show_plans_before_running")} more={t("plan.a_submitted_plan_starts_without")}>
+        <SegChoice label={t("settings.plan_approval")} value={state.auto ? "auto" : "ask"} action="plan-approval.auto" disabled={busy}
+          onPick={() => void flip()} options={[["ask", t("settings.every_time")], ["auto", t("settings.not_needed")]]} />
+      </SettingRow>
       {error && <div className="why">{error}</div>}
-    </div>
+    </>
   );
 }
 

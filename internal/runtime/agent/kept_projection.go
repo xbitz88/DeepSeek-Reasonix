@@ -8,24 +8,6 @@ import (
 	"reasonix/internal/contract/provider"
 )
 
-// keptForProjection is the form a verbatim-retained message takes in the
-// projection. Retention promises the message survives the fold, not that every
-// byte it arrived with does: a failure keeps its diagnosis without its passing
-// noise.
-func (a *contextWindow) keptForProjection(m provider.Message) provider.Message {
-	if !failedExecution(m.ToolExecution) {
-		return m
-	}
-	// A recorded selection is a model's reading of this exact output, so it
-	// wins over the word list and the position floor, which only approximate it.
-	if sel := m.ToolExecution.DiagnosticLines; len(sel) > 0 {
-		m.Content = keepFromSelection(m.Content, sel)
-		return m
-	}
-	m.Content = snipFailureTail(m.Content, recordedTailLines(m.ToolExecution))
-	return m
-}
-
 // supersedeStandingState drops each standing-state block a later turn — kept or
 // in the verbatim tail — repeats. Only a newer block with the same tag AND the
 // same attributes supersedes: a short reminder must never displace the fuller
@@ -53,27 +35,8 @@ func supersedeStandingState(kept, tail []provider.Message) []provider.Message {
 	return kept
 }
 
-// StripSupersededUserBlocks is the floor a retained turn can shrink to, with
-// every standing block gone. keepUserTurns costs turns against this floor: at
-// most one copy of each variant survives the whole fold, so the error is those
-// few blocks rather than one per turn.
-func StripSupersededUserBlocks(content string) string {
-	return filterLeadingBlocks(content, func(tag, _ string) bool {
-		return sessionstore.SupersededUserBlock[tag]
-	})
-}
-
 func carriesStandingState(m provider.Message) bool {
 	return m.Role == provider.RoleUser && !m.LocalOnly && !isCompactionSummary(m)
-}
-
-// projectedUserTurnFloor is what keepUserTurns measures a retained turn as.
-func projectedUserTurnFloor(m provider.Message) provider.Message {
-	if !carriesStandingState(m) {
-		return m
-	}
-	m.Content = StripSupersededUserBlocks(m.Content)
-	return m
 }
 
 // filterLeadingBlocks walks the host-injected block chain that opens content and

@@ -4,19 +4,21 @@ import { Group } from "./Group";
 
 /** One row: the chord as this platform writes it, and what it does. */
 const KEYS: Array<[string, string]> = [
-  [chord("F"), "在对话里查找"],
-  [chord("K"), "搜索会话"],
-  [chord("1"), "显示对话"],
-  [chord("2"), "显示运行分析"],
-  [chord("3"), "显示工作台"],
-  [`${chord("↑")} / ${chord("↓")}`, "在提问之间移动"],
-  [chord("Shift+E"), "优化提示词"],
-  [chord("Shift+F"), "工作台全屏"],
-  [`${chord("-")} / ${chord("+")} / ${chord("0")}`, "缩小 / 放大 / 复原界面"],
-  [chord("Enter"), "发送（发送键设为修饰键 + Enter 时）"],
-  ["Enter / Shift+Enter", "发送，或用 Shift 换行"],
-  ["Esc", "关闭当前弹层"],
-  ["← / → · Home", "聚焦分隔条后调宽或用 Home 复位"],
+  [chord("F"), "settings.find_in_the_conversation"],
+  [chord("K"), "settings.search_conversations"],
+  [chord("B"), "session.collapse_sidebar"],
+  [chord("1"), "session.show_conversation"],
+  [chord("2"), "session.show_run_analysis"],
+  [chord("3"), "session.show_workbench"],
+  [chord("`"), "terminal.open"],
+  [`${chord("↑")} / ${chord("↓")}`, "settings.move_between_your_questions"],
+  [chord("Shift+E"), "composer.refine_prompt"],
+  [chord("Shift+F"), "settings.workbench_full_screen"],
+  [`${chord("-")} / ${chord("+")} / ${chord("0")}`, "settings.make_the_interface_smaller_larger"],
+  [chord("Enter"), "settings.send_when_the_send_key"],
+  ["Enter / Shift+Enter", "settings.send_or_a_new_line"],
+  ["Esc", "settings.close_the_open_panel"],
+  ["← / → · Home", "settings.widen_a_divider_once_focused"],
 ];
 
 /** Every chord the window answers to, on one screen.
@@ -27,9 +29,9 @@ const KEYS: Array<[string, string]> = [
 export function KeysSheet() {
   return (
     <Group
-      id="keys"
-      title={t("快捷键")}
-      hint={t("下列按键在窗口中生效；标着 ⌘ 的地方，Windows 与 Linux 上是 Ctrl。")}
+      id="keys" pill={t("settings.view_and_edit")}
+      title={t("settings.keyboard_shortcuts")}
+      hint={t("settings.all_shortcuts_incl_global_and_esc")}
     >
       {KEYS.map(([keys, what]) => (
         <div className="lrow keys-row" key={keys + what}>

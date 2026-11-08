@@ -10,7 +10,7 @@ import { SsePort } from "../port/sse";
 import { WorkbenchPanel } from "./WorkbenchPanel";
 import { unseenPageOpenings } from "./browser_open";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe("WorkbenchPanel", () => {
   it("opens workspace files as tabs and saves what was typed in the editor", async () => {
@@ -183,13 +183,14 @@ describe("WorkbenchPanel", () => {
       return EditorView.findFromDOM(element as HTMLElement)!;
     });
     act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: "local draft" } }));
+    expect(screen.getByRole("tab", { name: "README.md" }).hasAttribute("data-dirty")).toBe(true);
     const plus = container.querySelector<HTMLButtonElement>(".workbench-new")!;
     await user.click(plus);
     expect(screen.getByRole("group", { name: "开始" })).toBeTruthy();
     expect(document.activeElement?.getAttribute("data-action")).toBe("workbench.launch-files");
-    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["README.md", "新标签"]);
     expect(open).not.toHaveBeenCalled();
-    expect((screen.getByRole("button", { name: /^改动/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "资源管理器" }).querySelector("small")).toBeNull();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("group", { name: "开始" })).toBeNull();
     expect(document.activeElement).toBe(plus);
@@ -207,7 +208,7 @@ describe("WorkbenchPanel", () => {
     expect(editor.state.doc.toString()).toContain("local draft");
   });
 
-  it("leaves new-tab choice through Files, Changes or an existing browser", async () => {
+  it("leaves new-tab choice through the explorer, finding a file or an existing browser", async () => {
     const user = userEvent.setup();
     const port = new MockPort();
     const open = vi.spyOn(port, "browserOpen");
@@ -218,12 +219,14 @@ describe("WorkbenchPanel", () => {
     await user.click(container.querySelector('[data-action="workbench.launch-files"]')!);
     expect(container.querySelector(".workbench-body")?.hasAttribute("data-files")).toBe(true);
     await user.click(plus);
-    await user.click(container.querySelector('[data-action="workbench.launch-changes"]')!);
-    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "新标签" }).getAttribute("aria-selected")).toBe("true");
+    await user.click(container.querySelector('[data-action="workbench.launch-find"]')!);
+    expect(container.querySelector(".workbench-body")?.hasAttribute("data-files")).toBe(true);
+    await waitFor(() => expect(document.activeElement).toBe(container.querySelector(".workbench-search input")));
     await user.click(plus);
     await user.click(screen.getByRole("tab", { name: "Existing page" }).querySelector("button")!);
     expect(screen.queryByRole("group", { name: "开始" })).toBeNull();
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
     expect(open).not.toHaveBeenCalled();
   });
 
@@ -345,20 +348,21 @@ describe("WorkbenchPanel", () => {
     render(<WorkbenchPanel {...props} tabs={[]} />);
     expect(screen.getByRole("group", { name: "开始" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "浏览器" })).toBeNull();
-    expect((screen.getByRole("button", { name: /^改动/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "资源管理器" }).querySelector("small")).toBeNull();
     await user.click(screen.getByRole("button", { name: "浏览器" }));
     expect(screen.getByRole("tab", { name: "浏览器" })).toBeTruthy();
     expect(screen.queryByRole("group", { name: "开始" })).toBeNull();
   });
 
-  it("opens the file explorer from the launcher and the first change from the changes entry", async () => {
+  it("opens the file explorer from the launcher, which carries the session's change count", async () => {
     const user = userEvent.setup();
     const changes = [{ path: "a.txt", status: "M" }] as never;
     const props = { port: new MockPort(), manual: true, shown: false, scheme: "dark" as const, changes, onCloseManual: vi.fn(), onSurfaces: vi.fn(), onExternal: vi.fn() };
-    render(<WorkbenchPanel {...props} tabs={[]} />);
-    await user.click(screen.getByRole("button", { name: /^改动/ }));
-    expect(await screen.findByRole("tab", { name: /a\.txt/ })).toBeTruthy();
-    expect(screen.queryByRole("group", { name: "开始" })).toBeNull();
+    const { container } = render(<WorkbenchPanel {...props} tabs={[]} />);
+    expect(screen.getByRole("button", { name: "资源管理器" }).querySelector("small")!.textContent).toBe("1");
+    expect(container.querySelector(".workbench-files-count")!.textContent).toBe("1");
+    await user.click(screen.getByRole("button", { name: "资源管理器" }));
+    expect(container.querySelector(".workbench-body")?.hasAttribute("data-files")).toBe(true);
   });
 
   it("gives way to the agent's page, with no launcher over it", () => {
@@ -370,7 +374,7 @@ describe("WorkbenchPanel", () => {
     expect(screen.getByRole("tab", { name: "百度热搜" }).getAttribute("aria-selected")).toBe("true");
   });
 
-  it("keeps the column while another tab is open, and folds it with the last", async () => {
+  it("keeps the column while another tab is open, and offers a new tab with the last", async () => {
     const user = userEvent.setup();
     const onCloseManual = vi.fn();
     const pages = [
@@ -382,7 +386,8 @@ describe("WorkbenchPanel", () => {
     expect(onCloseManual).not.toHaveBeenCalled();
     expect(screen.getByRole("tab", { name: "My page" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "关闭 My page" }));
-    expect(onCloseManual).toHaveBeenCalledTimes(1);
+    expect(onCloseManual).not.toHaveBeenCalled();
+    expect(screen.getByRole("group", { name: "开始" })).toBeTruthy();
   });
 
   it("keeps the column when its last tab closes while the explorer is open", async () => {
@@ -609,18 +614,22 @@ describe("WorkbenchPanel", () => {
 
     // From the keyboard: the menu key reports no pointer, and the item takes focus.
     fireEvent.contextMenu(screen.getByRole("button", { name: "README.md" }), { clientX: 0, clientY: 0 });
-    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "在系统文件管理器中显示" }));
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "复制引用" }));
+    const target = screen.getByRole("menuitem", { name: "在系统文件管理器中显示" });
+    for (let i = 0; i < screen.getAllByRole("menuitem").length && document.activeElement !== target; i++) await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(target);
     await user.keyboard("{Enter}");
     expect(reveal).toHaveBeenLastCalledWith("README.md");
   });
 
-  it("shows the open file in the system file manager from the file's own toolbar", async () => {
+  it("shows the open file in the system file manager from the file's own menu", async () => {
     const user = userEvent.setup();
     const port = new MockPort();
     const reveal = vi.spyOn(port, "revealInFileManager");
     render(<WorkbenchPanel port={port} tabs={[]} manual={false} shown scheme="light" changes={[]} onCloseManual={vi.fn()} onSurfaces={vi.fn()} onExternal={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "README.md" }));
-    await user.click(await screen.findByRole("button", { name: "在系统文件管理器中显示此文件" }));
+    await user.click(await screen.findByRole("button", { name: "更多" }));
+    await user.click(await screen.findByRole("menuitem", { name: /系统文件管理器|访达|文件资源管理器/ }));
     expect(reveal).toHaveBeenLastCalledWith("README.md");
   });
 
@@ -632,7 +641,8 @@ describe("WorkbenchPanel", () => {
     );
     render(<WorkbenchPanel port={port} tabs={[]} manual={false} shown scheme="light" changes={[]} onCloseManual={vi.fn()} onSurfaces={vi.fn()} onExternal={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "README.md" }));
-    await user.click(await screen.findByRole("button", { name: "在系统文件管理器中显示此文件" }));
+    await user.click(await screen.findByRole("button", { name: "更多" }));
+    await user.click(await screen.findByRole("menuitem", { name: /系统文件管理器|访达|文件资源管理器/ }));
     expect((await screen.findByRole("alert")).textContent).toBe("这个内核不在本机，没法在系统文件管理器中显示它的文件。");
   });
 
@@ -642,7 +652,8 @@ describe("WorkbenchPanel", () => {
     render(<WorkbenchPanel port={port} tabs={[]} manual={false} shown scheme="light" changes={[]} remote onCloseManual={vi.fn()} onSurfaces={vi.fn()} onExternal={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "README.md" }));
     await screen.findByRole("button", { name: "保存" });
-    expect(screen.queryByRole("button", { name: "在系统文件管理器中显示此文件" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.queryByRole("menuitem", { name: /系统文件管理器|访达|文件资源管理器/ })).toBeNull();
   });
 
   it("offers no way to reveal a remote workspace's paths on this machine", async () => {

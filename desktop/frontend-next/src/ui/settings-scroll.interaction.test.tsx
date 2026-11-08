@@ -20,26 +20,26 @@ function draw(at: string, port = new MockPort()) {
 }
 
 it.each([
-  ["appearance", "版本"],
-  ["tools", "会话"],
+  ["appearance", "账号与关于"],
+  ["tools", "Agent 行为"],
 ])("starts the next category at the top after scrolling %s", async (from, to) => {
   draw(from);
   const panel = screen.getByRole("tabpanel");
   panel.scrollTop = 1800;
   panel.scrollLeft = 120;
-  await userEvent.click(screen.getByRole("tab", { name: new RegExp(`^${to}(?!间消息)`) }));
-  expect(screen.getByRole("heading", { name: to, level: 2 })).toBeTruthy();
+  await userEvent.click(screen.getByRole("tab", { name: new RegExp(`^${to}`) }));
+  expect(screen.getByRole("tab", { name: new RegExp(`^${to}`), selected: true })).toBeTruthy();
   expect(screen.getByRole("tabpanel").scrollTop).toBe(0);
   expect(screen.getByRole("tabpanel").scrollLeft).toBe(0);
 });
 
 it("starts a keyboard-selected category at the top and keeps focus on its tab", async () => {
   draw("tools");
-  const current = screen.getByRole("tab", { name: /^工具与权限/ });
+  const current = screen.getByRole("tab", { name: /^权限与安全/ });
   current.focus();
   screen.getByRole("tabpanel").scrollTop = 1600;
   await userEvent.keyboard("{ArrowDown}");
-  const next = screen.getByRole("tab", { name: "会话间消息" });
+  const next = screen.getByRole("tab", { name: /^扩展/ });
   expect(next.getAttribute("aria-selected")).toBe("true");
   expect(document.activeElement).toBe(next);
   expect(screen.getByRole("tabpanel").scrollTop).toBe(0);
@@ -52,7 +52,7 @@ it("keeps the current category's scroll and unsaved input when it is selected ag
   await userEvent.type(prefix, "Unsaved draft");
   const panel = screen.getByRole("tabpanel");
   panel.scrollTop = 650;
-  await userEvent.click(screen.getByRole("tab", { name: "人设" }));
+  await userEvent.click(screen.getByRole("tab", { name: /^Agent 行为/ }));
   await userEvent.type(screen.getByRole("textbox", { name: "搜索设置" }), "字体");
   expect(screen.getByRole("tabpanel").scrollTop).toBe(650);
   expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "系统提示词开头" }).value).toBe("Unsaved draft");
@@ -72,17 +72,15 @@ it("keeps a search result's anchor after switching away from a scrolled category
   await userEvent.type(screen.getByRole("textbox", { name: "搜索设置" }), "柔和");
   await userEvent.click(await screen.findByRole("option", { name: /文字对比度/ }));
   const target = document.querySelector<HTMLElement>('[data-setting="contrast"]')!;
-  expect(target.closest<HTMLDetailsElement>("details")?.open).toBe(true);
   expect(scroll.mock.contexts).toContain(target);
   expect(screen.getByRole("tabpanel").scrollTop).toBe(420);
 });
 
-it("opens an initial anchor inside its disclosure", async () => {
+it("lands on an initial anchor and scrolls it into view", async () => {
   const scroll = anchorScrolling();
   draw("appearance:contrast");
-  await screen.findByRole("heading", { name: "外观", level: 2 });
+  await screen.findByRole("tab", { name: /^外观/, selected: true });
   const target = document.querySelector<HTMLElement>('[data-setting="contrast"]')!;
-  expect(target.closest<HTMLDetailsElement>("details")?.open).toBe(true);
   expect(scroll.mock.contexts).toContain(target);
   expect(screen.getByRole("tabpanel").scrollTop).toBe(420);
 });
@@ -94,7 +92,7 @@ it("waits for a delayed setting before starting the landing feedback lifetime", 
   vi.spyOn(port, "observabilitySettings").mockReturnValue(new Promise((resolve) => { finish = resolve; }));
   vi.useFakeTimers();
   const scroll = anchorScrolling();
-  draw("network:trace-export", port);
+  draw("account:trace-export", port);
   await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
   expect(document.querySelector('[data-setting="trace-export"]')).toBeNull();
   await act(async () => { finish(saved); });
@@ -123,10 +121,10 @@ it("cancels a pending landing when the user chooses another category", async () 
   const saved = await port.observabilitySettings();
   let finish!: (value: typeof saved) => void;
   vi.spyOn(port, "observabilitySettings").mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-  draw("network:trace-export", port);
-  await userEvent.click(screen.getByRole("tab", { name: /^版本/ }));
+  draw("account:trace-export", port);
+  await userEvent.click(screen.getByRole("tab", { name: /^数据/ }));
   await act(async () => { finish(saved); });
-  await userEvent.click(screen.getByRole("tab", { name: /^网络/ }));
+  await userEvent.click(screen.getByRole("tab", { name: /^账号/ }));
   const target = await waitFor(() => {
     const found = document.querySelector<HTMLElement>('[data-setting="trace-export"]');
     expect(found).toBeTruthy();

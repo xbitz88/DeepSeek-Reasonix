@@ -5,7 +5,7 @@ import { refresh as refreshWidth } from "./viewport";
 /** 正文起点。汉字同字号下笔画更密，中文高一档。求值留到调用时：模块加载早于
  *  i18n 定语言。这一档和 --doc 一起定行长：两个数只有一起看才有意义。
  *  这就是界面实际渲染的字号 —— 各个阅读面从它换算，不再各写各的字面值。 */
-export const readDefault = (): number => (current() === "zh" ? 13 : 12.5);
+export const readDefault = (): number => 14;
 
 /** 正文曾被各个阅读面写死，档位是围着那时的字号排的。存下来的是"哪一档"而不
  *  是像素，所以旧值按档位读回，选过"标准"的人还是标准。 */
@@ -22,25 +22,25 @@ export function readSizeOf(stored?: number): number {
 export const readSteps = (): [number, string][] =>
   current() === "zh"
     ? [
-        [12, "小"],
-        [13, "标准"],
-        [15, "大"],
-        [17, "更大"],
+        [12, "app.small"],
+        [14, "look.standard"],
+        [16.5, "app.large"],
+        [19, "app.larger"],
       ]
     : [
-        [11.5, "小"],
-        [12.5, "标准"],
-        [14.5, "大"],
-        [16.5, "更大"],
+        [12, "app.small"],
+        [14, "look.standard"],
+        [16, "app.large"],
+        [18, "app.larger"],
       ];
 
 /** Interface text steps: a scale over every size the stylesheet writes, with
  *  spacing and controls left where they are. Standard is stored as unset. */
 export const TEXT_STEPS: [number, string][] = [
-  [0.9, "小"],
-  [1, "标准"],
-  [1.15, "大"],
-  [1.3, "更大"],
+  [0.9, "app.small"],
+  [1, "look.standard"],
+  [1.15, "app.large"],
+  [1.3, "app.larger"],
 ];
 
 // The user's own settings, applied after a pack so they win: a pack is a
@@ -83,12 +83,10 @@ export function apply(look: Appearance | null, busy = false) {
   style.setProperty("--read", `${readSize}px`);
   style.setProperty("--read-scale", String(readSize / readDefault()));
 
-  // How far that prose runs is the other half of the same question, and the
-  // only one with two honest answers: a line short enough to read without
-  // losing your place, or a window used to the edge. Cards, commands and
-  // output answer to neither — they always have the width.
-  if (look?.width === "full" || look?.width === "full-all") root.dataset.measure = look.width;
+  if (look?.width === "full" || look?.width === "full-all" || look?.width === "custom") root.dataset.measure = look.width;
   else delete root.dataset.measure;
+  if (look?.width === "custom" && look.widthPercent) style.setProperty("--measure-width", `${look.widthPercent}%`);
+  else style.removeProperty("--measure-width");
 
   if (look?.fontUi) style.setProperty("--ui", `${look.fontUi}, ${FALLBACK_UI}`);
   else style.removeProperty("--ui");

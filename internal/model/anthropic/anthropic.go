@@ -97,6 +97,10 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	keyEnv, _ := cfg.Extra["api_key_env"].(string) // for actionable auth errors
 	keySource, _ := cfg.Extra["api_key_source"].(string)
 	thinking, effort := resolveReasoning(root, cfg.Extra)
+	thinking, effort, err := resolveMiniMaxReasoning(cfg, thinking, effort)
+	if err != nil {
+		return nil, err
+	}
 	vision, _ := cfg.Extra["vision"].(bool)
 	// DeepSeek's Anthropic-compatible endpoint documents image source blocks, so
 	// the constraint is the model's rather than the endpoint's. Defense in depth,
@@ -211,20 +215,6 @@ func normalizeDeepSeekAnthropicEffort(model, effort string) string {
 
 func (c *client) RequiresToolCallReasoning() bool {
 	return c.deepSeekThinkingEnabled()
-}
-
-func (c *client) MissingToolCallReasoningWarningIdentity() string {
-	if c == nil {
-		return ""
-	}
-	protocol := "anthropic"
-	if c.deepseek {
-		protocol = "deepseek-anthropic"
-	}
-	return strings.Join([]string{
-		"anthropic", strings.TrimSpace(c.name), strings.TrimSpace(c.requestURL),
-		strings.TrimSpace(c.model), protocol, strings.TrimSpace(c.thinking), strings.TrimSpace(c.effort),
-	}, "\x00")
 }
 
 func (c *client) sendOpts() provider.SendOptions {
@@ -480,7 +470,7 @@ func (c *client) buildRequest(_ context.Context, req provider.Request) anthReque
 		}
 		switch t {
 		case "adaptive":
-			r.Thinking = &thinkingConfig{Type: "adaptive", Display: "summarized"}
+			r.Thinking = c.adaptiveThinkingConfig()
 			if c.effort != "" {
 				r.OutputConfig = &outputConfig{Effort: c.effort}
 			}
@@ -488,7 +478,7 @@ func (c *client) buildRequest(_ context.Context, req provider.Request) anthReque
 			r.Thinking = &thinkingConfig{Type: t}
 		}
 	}
-	return r.forSummary(req.Summary)
+	return r
 }
 
 // readStream parses the Messages API SSE stream into Chunks. Text deltas emit live;
@@ -544,24 +534,19 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	tools := map[int]*provider.ToolCall{} // tool_use blocks, keyed by content index
 	argBuckets := map[int]int{}           // last emitted 2KB progress bucket per block
 	server := serverBlock{index: -1}      // the provider-run call a result block answers
-	var inTok, outTok, cacheCreate, cacheRead, serverTools int
+	var usage streamUsage
 	var stopReason string
-	haveUsage := false
-	mergeUsage := func(usage *wireUsage) {
-		if usage == nil {
-			return
+	finishUsage := func(partial bool) bool {
+		return usage.finish(ctx, c.nativeAnthropic, stopReason, partial, send)
+	}
+	// Explicit errors flush usage first because consumers may stop at ChunkError.
+	// Other exits (including canceled/abandoned consumers) make one best-effort
+	// delivery through the same cancellation-aware sink, never an unbounded wait.
+	defer func() { finishUsage(true) }()
+	fail := func(err error) {
+		if finishUsage(true) {
+			send(provider.Chunk{Type: provider.ChunkError, Err: err})
 		}
-		// The native Anthropic stream reports input/cache counters in
-		// message_start and output_tokens in message_delta. Compatible gateways
-		// such as LongCat report all counters in message_delta instead. Counters
-		// are cumulative and non-negative, so retaining the largest value also
-		// tolerates gateways that repeat partial usage in both events.
-		inTok = max(inTok, usage.InputTokens)
-		outTok = max(outTok, usage.OutputTokens)
-		cacheCreate = max(cacheCreate, usage.CacheCreationInputTokens)
-		cacheRead = max(cacheRead, usage.CacheReadInputTokens)
-		serverTools = max(serverTools, usage.ServerToolUse.WebSearchRequests)
-		haveUsage = true
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -585,14 +570,14 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 
 		var ev streamEvent
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			send(provider.Chunk{Type: provider.ChunkError, Err: provider.StreamDecodeError(c.name, data, err)})
+			fail(provider.StreamDecodeError(c.name, data, err))
 			return
 		}
 
 		switch ev.Type {
 		case "message_start":
 			if ev.Message != nil && ev.Message.Usage != nil {
-				mergeUsage(ev.Message.Usage)
+				usage.merge(ev.Message.Usage)
 			}
 		case "content_block_start":
 			if ev.ContentBlock != nil {
@@ -663,7 +648,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			if ev.Delta != nil && ev.Delta.StopReason != "" {
 				stopReason = ev.Delta.StopReason
 			}
-			mergeUsage(ev.Usage)
+			usage.merge(ev.Usage)
 		case "message_stop":
 			// Anthropic's terminal event. Tool blocks may already have closed;
 			// without this, the attempt stays speculative and is not committed.
@@ -671,7 +656,9 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			// reclassify a complete response as interrupted.
 			goto finalize
 		case "error":
-			send(provider.Chunk{Type: provider.ChunkError, Err: anthropicStreamError(c.name, ev.Error, sink.emitted)})
+			// Classify before usage delivery: accounting alone must not disable
+			// the existing before-output retry route.
+			fail(anthropicStreamError(c.name, ev.Error, sink.emitted))
 			return
 		}
 	}
@@ -681,42 +668,24 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	}
 	if stalled.Load() {
 		err := fmt.Errorf("%s: stream stalled — no data for %s, connection likely dropped; raise idle_timeout_seconds to allow a longer silence", c.name, idleTimeout)
-		send(provider.Chunk{Type: provider.ChunkError, Err: provider.StreamInterrupt(err, provider.StreamInterruptIdleTimeout)})
+		fail(provider.StreamInterrupt(err, provider.StreamInterruptIdleTimeout))
 		return
 	}
 	if err := scanner.Err(); err != nil {
-		send(provider.Chunk{Type: provider.ChunkError, Err: provider.ReadCut(c.name, err)})
+		fail(provider.ReadCut(c.name, err))
 		return
 	}
 	// EOF / clean close before message_stop is an uncommitted attempt. Complete
 	// ChunkToolCall blocks that arrived earlier remain speculative.
-	send(provider.Chunk{Type: provider.ChunkError, Err: provider.StreamInterrupt(
+	fail(provider.StreamInterrupt(
 		fmt.Errorf("%s: stream ended before message_stop: %w", c.name, io.ErrUnexpectedEOF),
 		provider.StreamInterruptPrematureEOF,
-	)})
+	))
 	return
 
 finalize:
-	if haveUsage {
-		cacheWriteBilledTokens := 0.0
-		if cacheCreate > 0 && c.nativeAnthropic {
-			cacheWriteBilledTokens = float64(cacheCreate) * cacheWrite5MinuteInputMultiplier
-		}
-		usage := &provider.Usage{
-			PromptTokens:           inTok + cacheCreate + cacheRead,
-			CompletionTokens:       outTok,
-			TotalTokens:            inTok + cacheCreate + cacheRead + outTok,
-			CacheHitTokens:         cacheRead,
-			CacheMissTokens:        inTok + cacheCreate,
-			CacheWriteTokens:       cacheCreate,
-			CacheWriteBilledTokens: cacheWriteBilledTokens,
-			FinishReason:           mapStopReason(stopReason),
-			ServerToolRequests:     serverTools,
-		}
-		provider.ApplyRequestAttemptCount(ctx, usage)
-		if !send(provider.Chunk{Type: provider.ChunkUsage, Usage: usage}) {
-			return
-		}
+	if !finishUsage(false) {
+		return
 	}
 	send(provider.Chunk{Type: provider.ChunkDone})
 }

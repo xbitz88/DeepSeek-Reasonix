@@ -1,10 +1,17 @@
 import type { ZoomRange } from "../port/port";
 
 export const ZOOM_PRESETS: [number, string][] = [
-  [0.9, "紧凑"],
-  [1, "标准"],
-  [1.15, "宽松"],
-  [1.3, "更大"],
+  [0.9, "app.compact"],
+  [1, "look.standard"],
+  [1.15, "app.comfortable"],
+  [1.3, "app.larger"],
+];
+
+/** The three rungs the settings row offers in place; the page behind it keeps all four and the slider. */
+export const SIZE_STEPS: [number, string][] = [
+  [0.9, "app.small"],
+  [1, "look.standard"],
+  [1.15, "app.large"],
 ];
 
 const EPS = 1e-9;

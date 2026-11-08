@@ -1,3 +1,4 @@
+import { MESSAGES } from "./msg";
 import { t } from "./index";
 import { FOLD_WHY, NO_CODE_WHY } from "./compaction_why";
 import { COMPACTION_TELEMETRY, compactionNoticeVars } from "./compaction_notice";
@@ -7,6 +8,7 @@ import { EXTENSION_SKIPPED, extensionSkippedVars } from "./extension_skipped";
 import { INBOX_RECOVERED, inboxRecoveredVars } from "./inbox_recovered";
 import { JOB_FAILED, JOB_FINISHED, JOB_STARTED, JOB_KILLED, JOB_STALLED, jobErrorText, jobNoticeVars, jobStalledVars } from "./job_notice";
 import { NOTICE_TEXT } from "./notices";
+import { KEPT_TURNS_FOLDED, USER_TURNS_DROPPED, turnsDroppedVars } from "./turns_dropped";
 import { PERMISSION_RULES_DORMANT, permissionRulesDormantVars } from "./permission_rules_dormant";
 
 export type NoticeVars = Record<string, string | number>;
@@ -30,6 +32,8 @@ const VARS: Record<string, (detail: string | undefined) => NoticeVars | undefine
   [COMPACTION_TELEMETRY]: compactionNoticeVars,
   [CONTEXT_COMPOSITION]: contextCompositionVars,
   [SUBAGENT_WAITING]: subagentWaitingVars,
+  [USER_TURNS_DROPPED]: turnsDroppedVars,
+  [KEPT_TURNS_FOLDED]: turnsDroppedVars,
   display_currency: (detail) => ({ mode: detail || "auto" }),
   compact_declined: compactReason("compact_declined"),
   compact_failed: compactReason("compact_failed"),
@@ -45,7 +49,7 @@ export function noticeWording(code: string | undefined, detail: string | undefin
   const text = code ? NOTICE_TEXT[code] : undefined;
   if (!code || !text) return undefined;
   const read = VARS[code];
-  if (!read) return /\{\w+\}/.test(text) ? undefined : { text };
+  if (!read) return /\{\w+\}/.test(MESSAGES[text]?.zh ?? text) ? undefined : { text };
   const vars = read(detail);
   return vars ? { text, vars } : undefined;
 }

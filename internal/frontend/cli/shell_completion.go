@@ -109,7 +109,7 @@ func cliCompletionRootSpec() cliCompletionSpec {
 		effort, permissionMode,
 		completionFlag("--auto -y", cliCompletionNoValue), completionFlag("--dangerously-skip-permissions --yolo", cliCompletionNoValue),
 		completionFlag("--print -p", cliCompletionNoValue),
-		completionFlag("--events-jsonl", cliCompletionNoValue), completionFlag("--fail-on-unverified", cliCompletionNoValue),
+		completionFlag("--events-jsonl", cliCompletionNoValue),
 		completionFlag("--output-format", cliCompletionStaticValue, "text", "json", "stream-json"),
 		completionFlag("--add-dir", cliCompletionPathValue),
 		completionFlag("--allowed-tools --allowedTools", cliCompletionStaticValue),
@@ -300,7 +300,7 @@ func cliServeCompletionFlags(model, profile, help cliCompletionFlag) []cliComple
 		// Serve/Web resume accepts file paths, not branch IDs.
 		completionFlag("--resume", cliCompletionPathValue),
 		completionFlag("--auth", cliCompletionStaticValue, "none", "token", "password"),
-		completionFlag("--token --password --port-file --token-file --pid-file", cliCompletionStaticValue),
+		completionFlag("--token --password --password-file --port-file --token-file --pid-file", cliCompletionStaticValue),
 		completionFlag("--hash-password --behind-proxy --open --no-open", cliCompletionNoValue), help,
 	}
 }

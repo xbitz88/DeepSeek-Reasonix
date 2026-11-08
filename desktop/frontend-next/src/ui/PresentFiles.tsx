@@ -32,18 +32,12 @@ export function PresentFiles({ port }: { port: AgentPort }) {
   };
 
   return (
-    <div className="box">
+    <>
       {state ? (
-        <div className="lrow">
-          <span className="tx">
-            <span className="lb">{t("启用 AI 文件交付卡片")}</span>
-            <span className="ds">{t("允许 AI 将已生成的文件展示为可点击的卡片，在工作台中打开预览。仅保存到用户配置，重新打开会话后生效。")}</span>
-          </span>
-          <Switch data-action="present-files.enabled" on={state.enabled} busy={busy}
-            label={t("启用 AI 文件交付卡片")} onClick={() => void flip()} />
-        </div>
-      ) : <div className="empty">{t(error ? "无法读取文件交付设置。" : "加载中…")}</div>}
+        <Switch data-action="present-files.enabled" on={state.enabled} busy={busy}
+          label={t("workbench.enable_ai_file_delivery_cards")} onClick={() => void flip()} />
+      ) : <div className="empty">{t(error ? "workbench.could_not_read_file_delivery" : "workbench.loading")}</div>}
       {error && <div className="why" role="alert">{error}</div>}
-    </div>
+    </>
   );
 }

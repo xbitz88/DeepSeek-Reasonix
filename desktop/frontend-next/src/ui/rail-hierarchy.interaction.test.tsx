@@ -30,7 +30,7 @@ function draw(withRemote = false, runtimes: RuntimeView[] = []) {
       reloadRemotes={async () => {}} reloadRemoteTrees={async () => {}}
       readRemoteTree={async () => {}} reloadTree={async () => {}} adder={{ busy: false, add: noop, addPath: noop } as never}
       onOpen={async () => {}} onOpenRemote={async () => {}} onFocusPane={noop} onClosePanes={async () => {}}
-      onPause={noop} onArchive={async () => {}} onRename={noop} onCollapse={noop} account={null} accountUnread="" wallet=""
+      onPause={noop} onArchive={async () => {}} onRename={noop} onCollapse={noop} wallet=""
       onSettings={noop} onFeedback={noop} feedbackUnread={0} onFind={noop} onError={noop}
     />,
   );
@@ -50,10 +50,15 @@ it("starts directly with projects instead of a local machine parent", () => {
   const project = document.querySelector<HTMLElement>(".wsrow")!;
   expect(project.getAttribute("aria-level")).toBe("1");
   expect(project.querySelector(".studio-icon")).toBeTruthy();
-  const count = project.querySelector(".rowcount")!;
-  expect(count.textContent).toBe("2");
-  expect(count.getAttribute("data-pill")).not.toBeNull();
+  expect(project.querySelector(".rowcount")).toBeNull();
   expect(document.querySelector('.sessrow')?.getAttribute("aria-level")).toBe("2");
+});
+
+it("draws no session count on a project row, folded or open", async () => {
+  draw();
+  await userEvent.click(screen.getByRole("button", { name: "收起所有项目" }));
+  expect(document.querySelector(".wsrow .rowcount")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "展开所有项目" }));
 });
 
 it("collapses and expands local and SSH projects together from one heading control", async () => {
@@ -91,6 +96,7 @@ it("reports no matches when neither local nor SSH projects match the search", as
 
 it("reports an empty unified pinned filter", async () => {
   draw(true);
+  await userEvent.click(document.querySelector(".session-filter-trigger")!);
   await userEvent.click(scope("pinned"));
   expect(screen.getByText("没有匹配的会话")).toBeTruthy();
 });

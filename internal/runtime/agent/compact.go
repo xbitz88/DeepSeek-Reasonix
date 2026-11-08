@@ -9,10 +9,8 @@ import (
 	"reasonix/internal/state/sessionstore"
 	"slices"
 	"strings"
-	"time"
 
 	"reasonix/internal/contract/ablation"
-	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/provider"
 	"reasonix/internal/contract/tool"
 )
@@ -22,29 +20,19 @@ import (
 // checkpoint is installed (stable prefix + one structured digest + recent tail).
 // 50% is only the normal acceptance ceiling — candidates are never padded up to it.
 const (
-	defaultCompactRatio          = 0.85 // capacity share of the window before maintenance
-	checkpointCeilingRatio       = 0.50 // normal auto-checkpoint acceptance ceiling
-	recentTailBudgetRatio        = 0.10 // recent verbatim tail as a fraction of the window
-	minRecentTailTokens          = 32 * 1024
-	maxRecentTailTokens          = 96 * 1024
-	summaryOutputMaxTokens       = 16 * 1024                  // max digest output; further clipped by remaining candidate space
-	summaryRetryOutputMaxTokens  = 2 * summaryOutputMaxTokens // one retry after a truncation may spend up to this
-	summaryEffort                = "low"                      // lowest depth an endpoint may approve; reasoning shares the output cap
-	exceptionalMinSavingsRatio   = 0.25                       // when fixed prefix alone exceeds 50%, require at least this savings
-	minRecentKeep                = 2                          // never keep fewer recent messages than this
-	minCompactMessages           = 2                          // skip compaction below this many compactable messages
-	fallbackTokPerChar           = 0.25                       // ~4 chars/token, used before any usage is available to calibrate
-	defaultPinnedFirstUserTokens = 1500                       // default ceiling on pinning the first user turn verbatim
-	pinnedFirstUserWindowFrac    = 0.15                       // and never pin a first turn worth more than this fraction of the window
-	keptUserTurnsWindowFrac      = 0.05                       // default verbatim user-turn budget, as a fraction of the window
-	keptUserTurnsFloorTokens     = 1024                       // ...with a floor so a small window still holds something
-	protocolReserveTokens        = 256                        // provider framing and control fields not represented by message estimates
+	defaultCompactRatio        = 0.90 // capacity share of the window before maintenance
+	checkpointCeilingRatio     = 0.50 // normal auto-checkpoint acceptance ceiling
+	refoldMinTokensRatio       = 0.10 // recent verbatim tail as a fraction of the window
+	minRefoldTokens            = 32 * 1024
+	maxRefoldTokens            = 96 * 1024
+	exceptionalMinSavingsRatio = 0.25 // when fixed prefix alone exceeds 50%, require at least this savings
+	minCompactMessages         = 2    // skip compaction below this many compactable messages
+	fallbackTokPerChar         = 0.25 // ~4 chars/token, used before any usage is available to calibrate
+	protocolReserveTokens      = 256  // provider framing and control fields not represented by message estimates
 )
 
 var (
-	errSummaryOutputTruncated = errors.New("summarizer output truncated")
-	errNoOutputHeadroom       = errors.New("no output budget above the previous attempt")
-	errCheckpointRejected     = errors.New("checkpoint candidate rejected")
+	errCheckpointRejected = errors.New("checkpoint candidate rejected")
 )
 
 // summaryTag wraps the compaction summary so the model can distinguish it from
@@ -53,35 +41,6 @@ const (
 	SummaryTagOpen  = "<compaction-summary>"
 	SummaryTagClose = "</compaction-summary>"
 )
-
-// summarySystemPrompt asks for a structured resume briefing (facts, goal,
-// decisions, files, commands, errors, next step) under fixed headings.
-const summarySystemPrompt = `You are compacting the earlier part of a coding agent's conversation to save context.
-The agent keeps your summary alongside the user's own turns (kept verbatim) and the recent tail; your job is to fold the assistant/tool work into a briefing it can resume from.
-Write under these exact headings, omitting a heading only if it has no content:
-
-## Standing facts & constraints
-Everything the user stated that still governs the work — names, paths, IDs, versions, tokens, preferences, and hard "never do X" rules — in their own words. Be exhaustive; this is the durable contract, so prefer over- to under-including.
-
-## Goal
-The user's request and intent.
-
-## Decisions & rationale
-Key choices made so far and why — so they are not re-litigated or reversed.
-
-## Files & code
-Files read or modified, with the specific facts that matter: signatures, line locations, data shapes, and exact edits applied. Be concrete; this is what lets the agent act without re-reading everything.
-
-## Commands & outcomes
-Commands run (builds, tests, git) and their relevant results — what passed, what failed, and the error text that matters.
-
-## Errors & fixes
-Problems hit and how they were resolved (or not), so the same dead ends are not repeated.
-
-## Pending & next step
-What is still in progress or unstarted, and the single most concrete next action to take.
-
-Rules: be terse — bullet points and fragments, not prose. Preserve identifiers, paths, and numbers exactly. Do NOT invent anything not present in the messages; if something is unknown, leave it out rather than guessing.`
 
 // compactTrigger is the sole automatic context-maintenance boundary. Output
 // budgets are intentionally absent: they are clipped against the final request
@@ -103,21 +62,6 @@ func (a *contextWindow) capacityCompactTrigger() int {
 	return max(1, int(float64(window)*ratio))
 }
 
-// economicCompactTrigger answers what a prompt costs to replay, which is a
-// property of its size and not of what the model could have held. It is an
-// explicit override: an unset or negative value leaves capacity as the only
-// automatic boundary.
-func (a *contextWindow) economicCompactTrigger() int {
-	if a.ablation.Off(ablation.Compaction) {
-		return 0
-	}
-	limit := a.budgets.ContextSoftLimitTokens
-	if limit <= 0 {
-		return 0
-	}
-	return limit
-}
-
 // CompactTrigger is the boundary in force, which is the number a frontend has
 // to show: the two bounds are configured separately and only one of them fires,
 // so a panel that renders the settings alone cannot say which.
@@ -131,9 +75,6 @@ func (a *contextWindow) compactTrigger() int {
 	capacity := a.capacityCompactTrigger()
 	if capacity <= 0 || a.compactRatio > 1 {
 		return capacity
-	}
-	if economic := a.economicCompactTrigger(); economic > 0 && economic < capacity {
-		return economic
 	}
 	return capacity
 }
@@ -154,23 +95,21 @@ func (a *contextWindow) hardInputCeiling() int {
 	return max(1, window-reserve)
 }
 
-// recentTailBudget is the content-construction budget for the recent verbatim
-// tail. Production windows use clamp(window×10%, 32K, 96K). Smaller synthetic
-// windows (tests / constrained providers) drop the 32K floor so the tail cannot
-// alone exceed the window.
-func (a *contextWindow) recentTailBudget() int {
+// refoldMinTokens is how much new closed history a second fold waits for:
+// every fold costs the whole prefix cache, so it must free more than it costs.
+func (a *contextWindow) refoldMinTokens() int {
 	window := a.effectiveContextWindow()
 	if window <= 0 {
-		return minRecentTailTokens
+		return minRefoldTokens
 	}
-	n := int(float64(window) * recentTailBudgetRatio)
-	if window >= minRecentTailTokens*2 {
-		if n < minRecentTailTokens {
-			n = minRecentTailTokens
+	n := int(float64(window) * refoldMinTokensRatio)
+	if window >= minRefoldTokens*2 {
+		if n < minRefoldTokens {
+			n = minRefoldTokens
 		}
 	}
-	if n > maxRecentTailTokens {
-		n = maxRecentTailTokens
+	if n > maxRefoldTokens {
+		n = maxRefoldTokens
 	}
 	if max := window / 2; max > 0 && n > max {
 		n = max
@@ -186,7 +125,7 @@ func (a *contextWindow) recentTailBudget() int {
 
 // checkpointCeiling is the auto-checkpoint acceptance upper bound: candidates
 // below it are accepted without padding. The default is half the window; a
-// user who would rather accept a looser fold than pay for another summary
+// user who would rather accept a looser fold than fold again sooner
 // raises it.
 func (a *contextWindow) checkpointCeiling() int {
 	window := a.effectiveContextWindow()
@@ -298,35 +237,14 @@ func isCompactionSummary(m provider.Message) bool {
 		strings.HasPrefix(strings.TrimLeft(m.Content, "\n "), SummaryTagOpen)
 }
 
-// pinnedPrefixLen counts the leading messages a fold keeps verbatim ahead of
-// everything else: the system prompt and the first user turn (its task + stated
-// facts/constraints) when it is small enough to be a brief. Digests are never
-// pinned — any digest in the transcript enters the fold region and is merged
-// into the next one, so a session cannot accumulate a chain of them.
+// pinnedPrefixLen counts the leading messages a fold leaves in place: the
+// system prompt and nothing else. Every conversational message may be archived.
 func (a *contextWindow) pinnedPrefixLen(msgs []provider.Message) int {
 	i := 0
 	if i < len(msgs) && msgs[i].Role == provider.RoleSystem {
 		i++
 	}
-	if i < len(msgs) && msgs[i].Role == provider.RoleUser && !isCompactionSummary(msgs[i]) && a.fixedPinnableUserTurn(msgs[i]) {
-		i++
-	}
 	return i
-}
-
-func (a *contextWindow) fixedPinnableUserTurn(m provider.Message) bool {
-	budget := defaultPinnedFirstUserTokens
-	if a.budgets.FirstTurnPinTokens > 0 {
-		budget = a.budgets.FirstTurnPinTokens
-	}
-	// The window guard stands whatever the setting: the pinned first turn sits
-	// in the fixed prefix and is paid for on every request of the session.
-	if window := a.effectiveContextWindow(); window > 0 {
-		if f := int(float64(window) * pinnedFirstUserWindowFrac); f < budget {
-			budget = f
-		}
-	}
-	return fixedTokenEstimate(m) <= budget
 }
 
 // closedPrefixEnd is how far into msgs every tool call has its result. A fold
@@ -350,40 +268,16 @@ func closedPrefixEnd(msgs []provider.Message) int {
 	return end
 }
 
-func (a *contextWindow) keepIndexes(region []provider.Message, policy KeepPolicy) ([]bool, userTurnRetention) {
+// keepIndexes marks what a fold may not archive: the request that began the
+// running turn and the tool-call groups it is still executing.
+func (a *contextWindow) keepIndexes(region []provider.Message) []bool {
 	keep := make([]bool, len(region))
 	activeTurn := a.activeTurnCreatedAt.Load()
-	policyStart := 0
 	for i, m := range region {
-		if isCompactionSummary(m) {
-			policyStart = i + 1
-		}
-	}
-	// Retention applies only to messages since the latest digest. A failed tool
-	// result is bounded by its own budget, since last fold's survivors sit past
-	// the digest and would otherwise be kept again.
-	var failures, marked []int
-	for i, m := range region {
-		if i >= policyStart && shouldKeepMessage(m, policy) {
-			switch m.Role {
-			case provider.RoleTool:
-				failures = append(failures, i)
-			case provider.RoleUser:
-				marked = append(marked, i)
-			default:
-				keep[i] = true
-			}
-		}
-		// The request that began the running turn states the work the rest of
-		// the turn is executing. Its closed transactions may fold; it may not.
 		if activeTurn != 0 && m.Role == provider.RoleUser && m.CreatedAt == activeTurn {
 			keep[i] = true
 		}
 	}
-	a.keepFailuresWithinBudget(region, keep, failures)
-	markedDropped, markedTokens := a.keepMarkedWithinBudget(region, keep, marked)
-	retention := a.keepUserTurns(region, keep)
-	retention.MarkedDropped, retention.MarkedDroppedTokens = markedDropped, markedTokens
 	pinned := slices.Clone(keep)
 	for i, m := range region {
 		if !pinned[i] {
@@ -398,7 +292,7 @@ func (a *contextWindow) keepIndexes(region []provider.Message, policy KeepPolicy
 			keepToolCallGroup(region, keep, i)
 		}
 	}
-	return keep, retention
+	return keep
 }
 
 // fixedTokenEstimate is what every verbatim-retention decision measures with.
@@ -406,16 +300,6 @@ func (a *contextWindow) keepIndexes(region []provider.Message, policy KeepPolicy
 // turn's ratio would keep a turn at one checkpoint and fold it at the next.
 func fixedTokenEstimate(m provider.Message) int {
 	return int(float64(msgChars(m)) * fallbackTokPerChar)
-}
-
-func shouldKeepMessage(m provider.Message, policy KeepPolicy) bool {
-	if policy&KeepErrors != 0 && isErrorMessage(m) {
-		return true
-	}
-	if policy&KeepUserMarked != 0 && isUserMarked(m) {
-		return true
-	}
-	return false
 }
 
 func isErrorMessage(m provider.Message) bool {
@@ -448,17 +332,6 @@ func failedExecution(ex *provider.ToolExecution) bool {
 	return ex.Verification == tool.ShellVerificationFailed
 }
 
-func isUserMarked(m provider.Message) bool {
-	if m.Role != provider.RoleUser {
-		return false
-	}
-	content := strings.TrimSpace(strings.ToLower(m.Content))
-	return strings.HasPrefix(content, "[[keep]]") ||
-		strings.HasPrefix(content, "[keep]") ||
-		strings.HasPrefix(content, "<keep>") ||
-		strings.HasPrefix(content, "<!-- keep -->")
-}
-
 func findToolCaller(region []provider.Message, toolIndex int, id string) int {
 	for i := toolIndex - 1; i >= 0; i-- {
 		if region[i].Role != provider.RoleAssistant {
@@ -481,92 +354,15 @@ func toolCallIDs(m provider.Message) map[string]bool {
 	return ids
 }
 
-// planCompaction returns [head:start] to fold; the tail is recentTailBudget
-// unless force halves it so CompactNow still reduces mid-size sessions.
-func (a *contextWindow) planCompaction(msgs []provider.Message, min int, force bool) (head, start int, ok bool) {
+// planCompaction returns [head:start] to fold: everything after the system
+// prompt. The caller trims it to the closed prefix of an active turn.
+func (a *contextWindow) planCompaction(msgs []provider.Message, min int, _ bool) (head, start int, ok bool) {
 	head = a.pinnedPrefixLen(msgs)
-	if a.effectiveContextWindow() > 0 {
-		budget := a.recentTailBudget()
-		if force {
-			if half := a.estimatedPromptTokens(provider.ModelMessages(msgs)) / 2; half > 0 && half < budget {
-				budget = half
-			}
-		}
-		start = tailStart(msgs, head, budget, a.tokPerChar(), a.tailFloor())
-		// Remeasure when force or non-strict roles; strict-alternating otherwise
-		// keeps a cheap tokPerChar overestimate of the tail under force.
-		floor := max(head, len(msgs)-a.tailFloor())
-		if force || !a.strictAlternatingRoles {
-			start = a.remeasuredTailStart(msgs, start, floor, budget)
-		}
-	} else {
-		// No window: keep a fixed recent count, aligned off tool results.
-		start = len(msgs) - a.tailFloor()
-		for start > head && start < len(msgs) && msgs[start].Role == provider.RoleTool {
-			start--
-		}
-	}
-	start = max(start, head)
+	start = len(msgs)
 	if start-head < min {
 		return head, start, false
 	}
 	return head, start, true
-}
-
-// remeasuredTailStart walks the cheap tokPerChar boundary forward until the
-// verbatim tail fits budget under the calibrated estimate. A request's shape is
-// the sum of its messages', so the measurement is carried and decremented per
-// message dropped; measuring each candidate whole instead re-scanned the whole
-// remaining transcript per step, and copied it whenever a receipt was present.
-func (a *contextWindow) remeasuredTailStart(msgs []provider.Message, start, floor, budget int) int {
-	policy := sharedWindowInputPolicyOf(a.svc.prov)
-	tail := requestCalibrationShape{}
-	for i := len(msgs) - 1; i >= start; i-- {
-		tail = tail.plus(projectedMessageCalibrationShape(msgs[i], policy))
-	}
-	drop := func() {
-		tail = tail.minus(projectedMessageCalibrationShape(msgs[start], policy))
-		start++
-	}
-	for start < floor && a.estimatedShapeTokens(tail) > budget {
-		drop()
-		for start < floor && start < len(msgs) && msgs[start].Role == provider.RoleTool {
-			drop()
-		}
-	}
-	return start
-}
-
-func (a *contextWindow) tailFloor() int {
-	if a.recentKeep > minRecentKeep {
-		return a.recentKeep
-	}
-	return minRecentKeep
-}
-
-// tailStart walks newest→oldest, growing the verbatim tail until the next
-// message would push its token estimate past budgetTokens (but never below
-// minKeep messages), then aligns the boundary back off any tool result so the
-// tail never begins with an orphan whose assistant tool_calls were summarized
-// away.
-func tailStart(msgs []provider.Message, head, budgetTokens int, tokPerChar float64, minKeep int) int {
-	start := len(msgs)
-	acc := 0
-	for i := len(msgs) - 1; i > head; i-- {
-		c := int(float64(msgChars(msgs[i])) * tokPerChar)
-		if len(msgs)-i > minKeep && acc+c > budgetTokens {
-			break
-		}
-		acc += c
-		start = i
-	}
-	// start == len(msgs) when nothing fit the tail (a session too small to have a
-	// message after head); there is no msgs[start] to align off, and the caller's
-	// minCompactMessages check then no-ops the pass.
-	for start > head && start < len(msgs) && msgs[start].Role == provider.RoleTool {
-		start--
-	}
-	return start
 }
 
 // tokPerChar derives a tokens-per-character ratio from the last turn's real
@@ -602,110 +398,6 @@ func msgChars(m provider.Message) int {
 		n += len(tc.Name) + len(tc.Arguments)
 	}
 	return n
-}
-
-func charsOfMessages(msgs []provider.Message) int {
-	n := 0
-	for _, m := range msgs {
-		n += msgChars(m)
-	}
-	return n
-}
-
-// summarize asks the executor's own provider (no tools) to distill the region
-// into a briefing. instructions is optional /compact focus + PreCompact text.
-func (a *contextWindow) summarize(ctx context.Context, region []provider.Message, instructions string) (string, *provider.Usage, error) {
-	return a.summarizeAt(ctx, region, instructions, summaryOutputMaxTokens, 0)
-}
-
-// summarizeAt sends one summary request whose output cap is at most limit. A
-// cap that cannot exceed above is refused with errNoOutputHeadroom before any
-// request is made. Named returns so defer can attach RequestCount.
-func (a *contextWindow) summarizeAt(ctx context.Context, region []provider.Message, instructions string, limit, above int) (summary string, usage *provider.Usage, err error) {
-	return a.summarizeAtMode(ctx, region, instructions, limit, above, true)
-}
-
-func (a *contextWindow) summarizeAtMode(ctx context.Context, region []provider.Message, instructions string, limit, above int, allowPrefix bool) (summary string, usage *provider.Usage, err error) {
-	parent := ctx
-	bounds := SummaryBounds
-	ctx, cancel := context.WithTimeoutCause(ctx, bounds.Ceiling, errSummaryCeiling)
-	defer cancel()
-	ctx = provider.WithIndependentRequestAttemptCounter(ctx)
-	defer func() {
-		if err != nil && parent.Err() == nil && errors.Is(context.Cause(ctx), errSummaryCeiling) {
-			err = summaryCeilingHit(bounds.Ceiling)
-		}
-		err = classifySummaryError(parent, err)
-	}()
-	defer func() {
-		usage = provider.UsageWithRequestAttemptCount(ctx, usage)
-		observeRootTokenUsage(ctx, usage)
-		if usage != nil && (usage.TotalTokens > 0 || usage.RequestCount > 0) {
-			// Recorded beside the emit, not at the call site that keeps the
-			// answer: a repair whose digest is discarded was still charged.
-			compactionSpendFrom(ctx).record(usage)
-			a.svc.sink.Emit(event.Event{Kind: event.Usage, ModelRef: a.modelRef, Usage: usage, Pricing: a.svc.pricing, UsageSource: event.UsageSourceCompaction})
-		}
-	}()
-	defer TrackPublishedHostStream(ctx, cancel)()
-	maxOut := limit
-	if a.maxOutputTokens > 0 && a.maxOutputTokens < maxOut {
-		maxOut = a.maxOutputTokens
-	}
-	req, reused := a.summaryRequest(region, instructions, maxOut, allowPrefix)
-	if budget, clipped, budgetErr := a.effectiveOutputBudget(req); budgetErr != nil {
-		return "", usage, budgetErr
-	} else if clipped {
-		req.MaxTokens = budget
-	}
-	if req.MaxTokens > limit {
-		req.MaxTokens = limit
-	}
-	if req.MaxTokens <= above {
-		return "", usage, errNoOutputHeadroom
-	}
-	if req.MaxTokens < 256 {
-		return "", usage, fmt.Errorf("summary output budget too small (%d tokens)", req.MaxTokens)
-	}
-	if a.svc.prov == nil {
-		return "", usage, fmt.Errorf("summary unavailable")
-	}
-	ch, err := a.svc.prov.Stream(ctx, req)
-	if err != nil {
-		return "", usage, err
-	}
-
-	var b strings.Builder
-	idle := time.NewTimer(bounds.Idle)
-	defer idle.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return "", usage, ctx.Err()
-		case <-idle.C:
-			return "", usage, summaryStalled(bounds.Idle)
-		case chunk, ok := <-ch:
-			idle.Reset(bounds.Idle)
-			if !ok {
-				s, err := summaryAtEOF(ctx, b.String(), usage, req.MaxTokens, reused)
-				return s, usage, err
-			}
-			switch chunk.Type {
-			case provider.ChunkText:
-				b.WriteString(chunk.Text)
-				// The digest is already streaming; forwarding it is what lets a
-				// frontend show a fold working rather than a spinner that cannot
-				// tell slow from stuck. Coalesced downstream like any delta.
-				if chunk.Text != "" {
-					a.svc.sink.Emit(event.Event{Kind: event.CompactionProgress, Text: chunk.Text})
-				}
-			case provider.ChunkUsage:
-				usage = chunk.Usage
-			case provider.ChunkError:
-				return "", usage, chunk.Err
-			}
-		}
-	}
 }
 
 // renderTranscript flattens messages into a readable transcript for summarization.

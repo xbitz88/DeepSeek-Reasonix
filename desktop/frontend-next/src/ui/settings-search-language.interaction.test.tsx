@@ -4,17 +4,20 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "./testkit";
 import { Settings } from "./Settings";
-import { SETTINGS, SECTION_NAME, SETTING_AT, settingMatches } from "./prefsnav";
+import { SETTINGS, SECTION_NAME, SETTING_AT, pageHome, settingMatches } from "./prefsnav";
+import { storageTotal } from "./storageTally";
 import { boot, STORAGE, t } from "../i18n";
 import { MockPort } from "../port/mock";
 import { MockHub } from "../port/mock_hub";
 import type { AgentPort, SessionStatus } from "../port/port";
 
+vi.mock("./storageTally", () => ({ STORAGE_TALLY_DELAY: 1500, cachedStorageTotal: () => 0, storageTotal: vi.fn() }));
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.setItem(STORAGE, "zh"); boot(); });
 const language = (lang: string) => { localStorage.setItem(STORAGE, lang); boot(); };
 const block = (anchor: string) => document.querySelector<HTMLElement>(`[data-setting="${anchor}"]`);
 
-function draw() {
+async function draw() {
   const port = new MockPort();
   const calls: string[] = [];
   const watched = new Proxy(port, {
@@ -25,6 +28,11 @@ function draw() {
     },
   }) as unknown as AgentPort;
   const onClose = vi.fn();
+  // The pane tallies the disk usage a beat after it opens, and that walk reads
+  // the port. A known total means no walk is scheduled at all, so the search
+  // is measured against the port as it stood — not against a timer that fires
+  // midway through the search and reads the port on the way past.
+  await storageTotal(watched);
   render(<Settings
     hub={new MockHub() as never} port={watched}
     status={{ preset: "balanced", toolApprovalMode: "ask" } as SessionStatus}
@@ -33,15 +41,15 @@ function draw() {
     onClose={onClose} onChanged={() => {}} onError={() => {}}
     account={null} accountUnread="" reloadAccount={() => {}}
   />);
-  return { calls, onClose, find: () => screen.getByRole<HTMLInputElement>("textbox", { name: t("搜索设置") }) };
+  return { calls, onClose, find: () => screen.getByRole<HTMLInputElement>("textbox", { name: t("settings.search_settings") }) };
 }
 
-it.each(["market", "plugins", "mcp", "skills", "ext-runtime", "hooks", "composition-picker"])(
+it.each(["market", "plugins", "mcp", "skills", "composition-picker"])(
   "finds the unmounted %s block by its displayed English title and lands on it",
   async (anchor) => {
     language("en");
     const entry = SETTING_AT(anchor)!;
-    const { find, calls } = draw();
+    const { find, calls } = await draw();
     await act(async () => {});
     expect(block(anchor)).toBeNull();
     const reads = [...calls];
@@ -59,20 +67,20 @@ it.each(["market", "plugins", "mcp", "skills", "ext-runtime", "hooks", "composit
     await waitFor(() => expect(block(anchor)).not.toBeNull());
     expect(find().value).toBe("");
     if (entry.section === "ext") {
-      expect(screen.getByRole("tab", { name: t(anchor === "market" ? "发现" : "已安装") }).getAttribute("aria-selected")).toBe("true");
+      expect(screen.getByRole("tab", { name: t(anchor === "market" ? "发现" : "ext.installed") }).getAttribute("aria-selected")).toBe("true");
     }
   },
 );
 
 it("finds extension blocks by the displayed section name without mounting them", async () => {
   language("en");
-  const { find, calls, onClose } = draw();
+  const { find, calls, onClose } = await draw();
   await act(async () => {});
   const reads = [...calls];
   await userEvent.type(find(), "Extension");
   const hits = screen.getAllByRole<HTMLButtonElement>("option");
-  expect(hits.map((hit) => hit.dataset.target)).toEqual(SETTINGS.filter((entry) => entry.section === "ext" && !entry.hidden).map((entry) => entry.anchor));
-  expect(hits.every((hit) => hit.querySelector(".where")?.textContent === "Extension")).toBe(true);
+  expect(hits.map((hit) => hit.dataset.target)).toEqual(SETTINGS.filter((entry) => pageHome(entry.section) === "ext" && !entry.hidden).map((entry) => entry.anchor));
+  expect(hits.every((hit) => hit.querySelector(".where")?.textContent?.startsWith("Extension"))).toBe(true);
   expect(calls).toEqual(reads);
   expect(block("plugins")).toBeNull();
   await userEvent.keyboard("{Escape}");
@@ -81,7 +89,7 @@ it("finds extension blocks by the displayed section name without mounting them",
   expect(onClose).not.toHaveBeenCalled();
   await userEvent.type(find(), "not-a-setting");
   expect(screen.queryByRole("option")).toBeNull();
-  expect(screen.getByText(t("没有匹配的设置"))).toBeTruthy();
+  expect(screen.getByText(t("settings.no_matching_setting"))).toBeTruthy();
   await userEvent.clear(find());
   expect(screen.queryByRole("listbox")).toBeNull();
 });

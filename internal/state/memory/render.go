@@ -23,6 +23,8 @@ type memoryFrontmatter struct {
 	Title          string `yaml:"title,omitempty"`
 	Desc           string `yaml:"description"`
 	Keywords       string `yaml:"keywords,omitempty"`
+	Galaxy         string `yaml:"galaxy,omitempty"`
+	Importance     int    `yaml:"importance,omitempty"`
 	Activation     string `yaml:"activation,omitempty"`
 	Volatility     string `yaml:"volatility,omitempty"`
 	SubjectKey     string `yaml:"subject_key,omitempty"`
@@ -42,6 +44,7 @@ func render(m Memory, name string) string {
 		Keywords: oneLine(m.Keywords), Activation: string(NormalizeActivation(string(m.Activation))),
 		Volatility: string(NormalizeVolatility(string(m.Volatility))),
 		SubjectKey: NormalizeSubjectKey(m.SubjectKey),
+		Galaxy:     NormalizeGalaxy(m.Galaxy), Importance: NormalizeImportance(m.Importance),
 	}
 	if !m.CreatedAt.IsZero() {
 		fm.CreatedAt = m.CreatedAt.UTC().Format(time.RFC3339Nano)

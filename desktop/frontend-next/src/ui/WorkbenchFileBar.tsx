@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { ReactNode } from "react";
 import { t } from "../i18n";
 import { StudioIcon } from "./StudioIcon";
@@ -17,7 +18,7 @@ export function WorkbenchFileBar({
   readOnlyIn,
   onSave,
   openWith,
-  onReveal,
+  onMore,
   document = false,
   source = true,
 }: {
@@ -31,8 +32,8 @@ export function WorkbenchFileBar({
   readOnlyIn?: string;
   onSave: () => void;
   openWith?: ReactNode;
-  // Present only where the kernel's own machine can show the file.
-  onReveal?: () => void;
+  // Opens the file's menu (add to the conversation, copy, reveal) under the "…" button.
+  onMore?: (anchor: HTMLElement) => void;
   document?: boolean;
   source?: boolean;
 }) {
@@ -43,28 +44,32 @@ export function WorkbenchFileBar({
   );
   return (
     <div className="workbench-filebar">
-      <strong>{path}</strong>
-      {onReveal && (
-        <button className="workbench-reveal" data-action="workbench.reveal" data-target={path} aria-label={t("在系统文件管理器中显示此文件")} title={t("在系统文件管理器中显示此文件")} onClick={onReveal}>
-          <StudioIcon name="reveal" />
-        </button>
-      )}
+      <strong title={path}>
+        {path.split("/").slice(0, -1).map((part, i) => <Fragment key={i}><span>{part}</span><i aria-hidden="true">/</i></Fragment>)}
+        <b>{path.split("/").at(-1)}</b>
+      </strong>
       <div role="group">
-        {readable && view("read", t("阅读"))}
-        {document && view("document", t("预览"))}
-        {previewable && view("preview", t("交互运行"))}
-        {source && view("file", !readOnlyIn && (readable || previewable || document) ? t("编辑") : t("文件"))}
+        {readable && view("read", t("workbench.read"))}
+        {document && view("document", t("common.preview"))}
+        {previewable && view("preview", t("workbench.run_interactively"))}
+        {source && view("file", !readOnlyIn && (readable || previewable || document) ? t("common.edit") : t("common.files"))}
         {source && !readOnlyIn && view("diff", "Diff")}
       </div>
       {openWith}
       {readOnlyIn ? (
-        <span className="workbench-readonly" title={readOnlyIn}>{t("只读 · 来自你授权的文件夹")}</span>
+        <span className="workbench-readonly" title={readOnlyIn}>{t("workbench.read_only_from_a_folder")}</span>
       ) : source ? (
         <button className="workbench-save" data-action="workbench.save" data-target={path} disabled={!canSave} onClick={onSave}>
           <StudioIcon name="check" />
-          {t("保存")}
+          {t("common.save")}
         </button>
       ) : null}
+      {onMore && (
+        <button className="workbench-reveal" data-action="workbench.file-more" data-target={path} aria-haspopup="menu" aria-label={t("common.more")} title={t("common.more")}
+          onClick={(e) => { e.stopPropagation(); onMore(e.currentTarget); }}>
+          <StudioIcon name="more" />
+        </button>
+      )}
     </div>
   );
 }

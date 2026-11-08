@@ -114,18 +114,19 @@ describe("the changed-files pill above the input box", () => {
     await waitFor(() => expect(pill()!.textContent).toBe("2 个文件已更改+5−4"));
   });
 
-  it("opens the workbench's change section, again after the file list was closed", async () => {
+  it("opens the workbench's changes page, and again after that page was closed", async () => {
     const onManualBrowser = vi.fn();
     await open([change("a.go", 1, 0)], { onManualBrowser });
     await waitFor(() => expect(pill()).toBeTruthy());
+    const changesTab = () => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.startsWith("改动") ?? false;
     fireEvent.click(pill()!);
     expect(onManualBrowser).toHaveBeenCalledWith(true);
-    await waitFor(() => expect(document.querySelector(".workbench-body[data-files]")).toBeTruthy());
-    expect(document.querySelector(".workbench-changes")).toBeTruthy();
-    fireEvent.click(document.querySelector('[data-action="workbench.files"]')!);
-    expect(document.querySelector(".workbench-body[data-files]")).toBeNull();
+    await waitFor(() => expect(changesTab()).toBe(true));
+    expect(document.querySelector(".wb-changes")).toBeTruthy();
+    fireEvent.click(document.querySelector('[data-action="workbench.close"][data-target="changes:"]')!);
+    await waitFor(() => expect(document.querySelector(".wb-changes")).toBeNull());
     fireEvent.click(pill()!);
-    await waitFor(() => expect(document.querySelector(".workbench-body[data-files]")).toBeTruthy());
+    await waitFor(() => expect(changesTab()).toBe(true));
   });
 
   it("does not open the file list on mount or when the tree refreshes", async () => {
@@ -143,12 +144,12 @@ describe("the changed-files pill above the input box", () => {
     vi.spyOn(pane.port, "steer").mockImplementation((text) => pane.port.queueFollowup(text));
     fireEvent.change(box(), { target: { value: "next thing", selectionStart: 10 } });
     fireEvent.click(await screen.findByRole("button", { name: "插话" }));
-    await screen.findByRole("button", { name: "取回" });
+    await screen.findByRole("button", { name: "撤回" });
     pane.send({ kind: "notice", level: "warn", audience: "operator", code: "x.y", text: "运行时提示" });
     await screen.findByText("运行时提示");
     expect(pill()).toBeTruthy();
-    expect(screen.getByRole("button", { name: "取回" }).closest(".composeaux")).toBeTruthy();
-    expect(pill()!.closest(".composeaux, .composenotes")).toBeNull();
+    expect(screen.getByRole("button", { name: "撤回" }).closest(".queue")).toBeTruthy();
+    expect(pill()!.closest(".queue, .composeaux, .composenotes")).toBeNull();
     expect(document.querySelector(".composenotes")!.contains(screen.getByText("运行时提示"))).toBe(true);
   });
 

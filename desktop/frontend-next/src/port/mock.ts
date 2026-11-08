@@ -1,9 +1,9 @@
-import { sessionCompletion } from "./mock_sessions";
+import { benchJobs, sessionCompletion } from "./mock_sessions";
 import type { SurfaceActionRequest, SurfaceActionRecord } from "./surface";
 import type { JobOutput, PlanAction } from "./session";
 import { approvalKind } from "./mock_approval";
 import { HttpError } from "./port";
-import type { AccountState, AgentPort, Completion, CompletionItem, DeviceGrant, StudioLogs, VersionHub, VersionNotes, ApprovalMode, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindUndo, RewindScope, HistoryMessage, HostTodo, BrowserTab, ModelEntry, Preset, ProviderSetup, RoleAssignments, RoleOverride, SessionEntry, SessionStatus, WalletReading, MemoryCatalog, MemoryEdit, UsageReport, MemoryEntry, WorkspaceInfo, Attachment, DroppedRef, Queue, QueueItem, Queued, ChipCall, NotifyPrefs, TrayPrefs, UsageQuery } from "./port";
+import type { AccountState, AgentPort, Completion, CompletionItem, DeviceGrant, StudioLogs, VersionHub, VersionNotes, ApprovalMode, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindUndo, RewindScope, HistoryMessage, HostTodo, BrowserTab, ModelEntry, Preset, ProviderSetup, RoleAssignments, RoleOverride, SessionEntry, SessionStatus, WalletReading, MemoryCatalog, MemoryEdit, UsageReport, UploadReport, MemoryEntry, WorkspaceInfo, Attachment, DroppedRef, Queue, QueueItem, Queued, ChipCall, NotifyPrefs, TrayPrefs, UsageQuery } from "./port";
 import type { ExecutionGraphRead, TrajectoryRead, WireEvent } from "./wire";
 import { MockWorkspace, mockWorkspaces, mockWorktreeSources, MockPreparations } from "./mock_workspace";
 import { SCRIPT, mockMsgIndex, mockTurnStart } from "./fixture";
@@ -11,7 +11,7 @@ import { MockExecutionHold, mockExecutionGraph } from "./mock_graph";
 import { mockStorage, mockStoragePlan } from "./mock_storage";
 import { MEMORIES, mockMemoryCatalog } from "./mock_memory";
 import { mockModels } from "./mock_models";
-import { mockUsage } from "./mock_usage";
+import { mockUploadUsage, mockUsage } from "./mock_usage";
 
 export class MockPort extends MockWorkspace implements AgentPort {
   private listeners = new Set<(ev: WireEvent) => void>();
@@ -112,9 +112,9 @@ export class MockPort extends MockWorkspace implements AgentPort {
 
   private mem: MemoryEntry[] = MEMORIES.map((m) => ({ ...m }));
 
-  async usage(query: number | UsageQuery): Promise<UsageReport> {
-    return mockUsage(query);
-  }
+  async usage(query: number | UsageQuery): Promise<UsageReport> { return mockUsage(query); }
+
+  uploadUsage(days: number): Promise<UploadReport> { return Promise.resolve(mockUploadUsage(days)); }
 
   async memories(): Promise<MemoryCatalog> {
     return mockMemoryCatalog(this.mem);
@@ -139,12 +139,11 @@ export class MockPort extends MockWorkspace implements AgentPort {
   async saveMemory(edit: MemoryEdit) {
     const at = this.mem.findIndex((m) => m.name === edit.name);
     if (at >= 0) {
-      // Keep what it replaced, the way the store does: a history panel driven
-      // by a fixture that overwrites would show one entry and prove nothing.
-      this.memPast[edit.name] = [...(this.memPast[edit.name] ?? [this.mem[at]]), this.mem[at]];
-      this.mem[at] = { ...this.mem[at], title: edit.title, description: edit.description,
-        body: edit.body, activation: edit.activation, revision: (this.mem[at].revision ?? 1) + 1,
-        updatedAt: new Date().toISOString().slice(0, 10) };
+      const cur = this.mem[at];
+      this.memPast[edit.name] = [...(this.memPast[edit.name] ?? [cur]), cur];
+      this.mem[at] = { ...cur, title: edit.title, description: edit.description, body: edit.body,
+        activation: edit.activation, revision: (cur.revision ?? 1) + 1, updatedAt: new Date().toISOString().slice(0, 10),
+        new: false, galaxy: edit.galaxy || cur.galaxy, importance: edit.importance || cur.importance, type: edit.type || cur.type };
     }
   }
 
@@ -161,8 +160,6 @@ export class MockPort extends MockWorkspace implements AgentPort {
       .map((m) => ({ ...m }));
   }
 
-  // Restoring appends a revision rather than rewinding to one, so the entry a
-  // reader was just looking at is still there afterwards.
   async restoreMemory(name: string, revision: number) {
     const at = this.mem.findIndex((m) => m.name === name);
     const old = (await this.memoryRevisions(name)).find((m) => (m.revision ?? 1) === revision);
@@ -175,6 +172,9 @@ export class MockPort extends MockWorkspace implements AgentPort {
 
   async forgetMemory(name: string) {
     this.mem = this.mem.filter((m) => m.name !== name);
+  }
+  async confirmMemory(name: string) {
+    this.mem = this.mem.map((m) => (m.name === name ? { ...m, new: false, state: "clear", uses: (m.uses ?? 0) + 1 } : m));
   }
 
   async versions(_refresh?: boolean): Promise<VersionHub> {
@@ -357,7 +357,7 @@ export class MockPort extends MockWorkspace implements AgentPort {
   async markSessionViewed() {}
 
   async status(): Promise<SessionStatus> {
-    return { ...this.state, agentCompositionLocked: this.compositions.compositionStarted, ...(location.search.includes("tariff") && { tariff: { peak: !location.search.includes("tariff=off"), changesAt: new Date(Date.now() + 130 * 60_000).toISOString() } }) };
+    return { ...this.state, agentCompositionLocked: this.compositions.compositionStarted, ...(location.search.includes("tariff") && { tariff: { peak: !location.search.includes("tariff=off"), changesAt: new Date(Date.now() + 130 * 60_000).toISOString() } }), ...(location.search.includes("jobs") && benchJobs()) };
   }
 
   async balance(): Promise<WalletReading | null> {
@@ -414,6 +414,10 @@ export class MockPort extends MockWorkspace implements AgentPort {
 
   async branchAt(turn: number): Promise<string> {
     return `/mock/branch-${turn}.jsonl`;
+  }
+
+  async continueFromTail(path: string): Promise<{ path: string; dropped: number }> {
+    return { path: path.replace(/\.jsonl$/, "-tail.jsonl"), dropped: 12 };
   }
 
   // The second prompt onwards is scripted to have run bash, so mock mode can
@@ -656,7 +660,7 @@ export class MockPort extends MockWorkspace implements AgentPort {
   }
 
   async jobOutput(jobId: string): Promise<JobOutput> {
-    const job = this.state.jobs?.find((j) => j.id === jobId);
+    const job = [...(this.state.jobs ?? []), ...(location.search.includes("jobs") ? benchJobs().jobs ?? [] : [])].find((j) => j.id === jobId);
     if (!job || job.status !== "running") throw new HttpError(409, "no running background job with this id", { code: "job.not_running" });
     return { text: "> dev\n> vite\n\n  VITE ready in 312 ms\n  Local: http://localhost:5173/\n", status: job.status, bytes: 66, truncated: false };
   }

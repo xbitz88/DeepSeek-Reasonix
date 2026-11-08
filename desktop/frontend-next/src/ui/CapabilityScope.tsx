@@ -8,40 +8,27 @@ import type { CapabilityScope } from "../port/port";
 // read identically in a project that simply inherited everything.
 export function Exception({ onClear, busy }: { onClear: () => void; busy: boolean }) {
   return (
-    <button className="exc" data-action="capability.scope" disabled={busy} title={t("恢复为跟随全局")} onClick={onClear}>
-      {t("仅本项目")}
+    <button className="exc" data-action="capability.scope" disabled={busy} title={t("ext.go_back_to_following_the")} onClick={onClear}>
+      {t("ext.this_project_only_2")}
     </button>
   );
 }
 
-// Which folder this page is answering for. The shell holds several projects at
-// once and the pane follows whichever one is in front, so the heading has to
-// name it — otherwise switching tabs silently changes the list under an
-// unchanged title. Worktrees of one repository share one answer, and saying how
-// many is what stops "my settings vanished on a new branch". The name is also
-// the way out: a project can be managed without the session moving to it.
-export function ScopeBar({
+// The project the extension lists answer for, as one pill that opens the list of
+// projects. It sits in settings and on the extension page, so choosing is never
+// a trip to another page.
+export function ScopePill({
   scope, scopes, onPick,
 }: {
   scope: CapabilityScope; scopes: CapabilityScope[]; onPick: (root: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const shared = scope.repo && (scope.trees ?? 1) > 1;
-  const elsewhere = !scope.current;
   return (
-    <div className="scopebar" data-away={elsewhere ? "" : undefined}>
-      <button className="who" aria-expanded={open} onClick={() => setOpen(!open)}>
+    <span className="scopeanchor">
+      <button type="button" className="spill who" data-action="ext.scope" aria-expanded={open} onClick={() => setOpen(!open)}>
         {scope.label || scope.name}
         <i className="cv" aria-hidden>▾</i>
       </button>
-      <span className="pt" title={scope.root}>{scope.root}</span>
-      {scope.branch && <span className="br">{scope.branch}</span>}
-      {shared && <span className="sh">{t("{n} 个工作树共用这份设置", { n: scope.trees ?? 1 })}</span>}
-      {!scope.repo && <span className="sh">{t("不是 git 仓库，按目录单独记")}</span>}
-      <span className="ov">
-        {scope.overrides ? t("{n} 项只在这里生效", { n: scope.overrides }) : t("没有本项目的例外")}
-      </span>
-      {elsewhere && <span className="away">{t("不是当前会话所在的项目 —— 只能改开关")}</span>}
       {open && (
         <ScopePicker
           scopes={scopes}
@@ -52,6 +39,55 @@ export function ScopeBar({
           }}
         />
       )}
+    </span>
+  );
+}
+
+// Which folder the extension lists answer for. The shell holds several projects
+// at once and the pane follows whichever one is in front, so this is chosen on
+// purpose here rather than inferred from the tab in front. Worktrees of one
+// repository share one answer, and saying how many is what stops "my settings
+// vanished on a new branch". Choosing a project manages it without the session
+// moving to it.
+export function ScopeRow({
+  scope, scopes, onPick,
+}: {
+  scope: CapabilityScope; scopes: CapabilityScope[]; onPick: (root: string) => void;
+}) {
+  const shared = scope.repo && (scope.trees ?? 1) > 1;
+  return (
+    <div className="scoperow">
+      <div className="srow" data-setting="ext-scope">
+        <div className="srow-meta">
+          <span className="srow-name">{t("ext.manage_which_project")}</span>
+          <span className="srow-desc">{t("ext.scope_hint")}</span>
+        </div>
+        <div className="srow-ctl">
+          <ScopePill scope={scope} scopes={scopes} onPick={onPick} />
+        </div>
+      </div>
+      <div className="scopeinfo">
+        <span className="pt" title={scope.root}>{scope.root}</span>
+        {scope.branch && <span className="br">{scope.branch}</span>}
+        <span className="ds">
+          {[
+            shared ? t("ext.n_worktrees_share_this_setting", { n: scope.trees ?? 1 }) : null,
+            !scope.repo ? t("ext.not_a_git_repository_kept") : null,
+            scope.overrides ? t("ext.n_settings_apply_only_here", { n: scope.overrides }) : t("ext.no_exceptions_for_this_project"),
+          ].filter(Boolean).join(" · ")}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// The extension page names whose list it is only when that is not the running
+// project, so the same heading never quietly changes owner.
+export function ScopeAway({ scope, onBack }: { scope: CapabilityScope; onBack: () => void }) {
+  return (
+    <div className="scopeaway" role="note">
+      <span>{t("ext.managing_other_project", { name: scope.label || scope.name })}</span>
+      <button type="button" className="act" data-action="ext.scope-back" onClick={onBack}>{t("ext.back_to_the_current_project")}</button>
     </div>
   );
 }
@@ -79,7 +115,7 @@ function ScopePicker({
           className="q"
           autoFocus
           value={q}
-          placeholder={t("搜索项目…")}
+          placeholder={t("ext.search_projects")}
           onChange={(e) => setQ(e.target.value)}
         />
       )}
@@ -88,7 +124,7 @@ function ScopePicker({
         aria-pressed={onlyChanged}
         onClick={() => setOnlyChanged(!onlyChanged)}
       >
-        {t("只看有例外的")}
+        {t("ext.only_those_with_exceptions")}
       </button>
       {shown.map((sc) => (
         <button
@@ -100,17 +136,17 @@ function ScopePicker({
         >
           <span className="nm">
             {sc.label || sc.name}
-            {sc.current && <i className="cur">{t("当前会话")}</i>}
+            {sc.current && <i className="cur">{t("common.this_session")}</i>}
           </span>
           <span className="pt">
             {sc.root}
-            {sc.repo && (sc.trees ?? 1) > 1 && ` · ${t("{n} 个工作树", { n: sc.trees ?? 1 })}`}
-            {!sc.repo && ` · ${t("非 git")}`}
+            {sc.repo && (sc.trees ?? 1) > 1 && ` · ${t("ext.n_worktrees", { n: sc.trees ?? 1 })}`}
+            {!sc.repo && ` · ${t("ext.not_git")}`}
           </span>
-          {sc.overrides > 0 && <i className="ct">{t("{n} 项例外", { n: sc.overrides })}</i>}
+          {sc.overrides > 0 && <i className="ct">{t("ext.n_exceptions", { n: sc.overrides })}</i>}
         </button>
       ))}
-      {shown.length === 0 && <div className="empty">{t("没有匹配的项目。")}</div>}
+      {shown.length === 0 && <div className="empty">{t("ext.no_project_matches")}</div>}
     </div>
   );
 }

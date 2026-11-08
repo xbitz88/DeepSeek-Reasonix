@@ -6,7 +6,6 @@ import (
 	"errors"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 
@@ -273,34 +272,6 @@ func TestRewrittenCallFeedsExecutedArgumentsLiveAndOriginalOnesOnReplay(t *testi
 	}
 }
 
-// Compaction folds what the model sees and leaves the canonical transcript
-// whole, so a conversation reopened after one still replays every call.
-func TestCompactionDoesNotCostTheReplayAnyTouchedPath(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(readingTool{pathTool{name: "read_file", readOnly: true, read: "/ws/early.go"}})
-	sess := &sessionstore.Session{Messages: []provider.Message{
-		{Role: provider.RoleSystem, Content: "sys"},
-		{Role: provider.RoleUser, Content: "task"},
-		callMsg("1", "read_file"), resultMsg("1", "read_file", nil),
-		{Role: provider.RoleAssistant, Content: strings.Repeat("a ", 5000)},
-		{Role: provider.RoleUser, Content: "c"},
-		{Role: provider.RoleAssistant, Content: strings.Repeat("b ", 5000)},
-		{Role: provider.RoleUser, Content: "e"},
-		{Role: provider.RoleAssistant, Content: "f"},
-	}}
-	opts := Options{ContextWindow: 10_000, CompactRatio: 0.8, RecentKeep: 2}
-	a := New(&fakeProvider{reply: "s"}, reg, sess, opts, event.Discard)
-	prepareForObservedUsage(a, context.Background(), &provider.Usage{PromptTokens: 8500})
-	if !hasCompactionSummary(visibleContext(a)) {
-		t.Fatal("the fixture did not compact")
-	}
-	obs := &recordedPaths{}
-	a.SetPathObserver(obs)
-	if got, want := obs.seen(), []string{"/ws/early.go"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("after compaction the replay saw %q, want %q", got, want)
-	}
-}
-
 type proxyTool struct {
 	pathTool
 	target tool.Tool
@@ -346,5 +317,26 @@ func TestCallThroughAProxyFeedsLiveAndReplaysAsItsTarget(t *testing.T) {
 	a.SetSession(sessionWith(msgs...))
 	if got, want := obs.seen(), []string{"/ws/a.go"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("replay observed %q, want only the call whose recorded target resolves: %q", got, want)
+	}
+}
+
+// A replay resolves paths against the disk as it is now, once; a long
+// conversation that read one file a hundred times must not pay a hundred
+// symlink walks for it on every resume.
+func TestReplayObservesEachDistinctPathOnce(t *testing.T) {
+	obs := &recordedPaths{}
+	a := touchedAgent(t, obs, Options{},
+		readingTool{pathTool{name: "read_file", readOnly: true, read: "/ws/hot.go"}},
+		writingTool{pathTool{name: "edit_file", writes: []string{"/ws/hot.go", "/ws/other.go"}}},
+	)
+	var msgs []provider.Message
+	for i := range 50 {
+		id := string(rune('a'+i%26)) + string(rune('A'+i/26))
+		msgs = append(msgs, callMsg(id, "read_file"), resultMsg(id, "read_file", nil))
+	}
+	msgs = append(msgs, callMsg("w", "edit_file"), resultMsg("w", "edit_file", nil))
+	a.SetSession(sessionWith(msgs...))
+	if got, want := obs.seen(), []string{"/ws/hot.go", "/ws/other.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("replay observed %q, want each distinct path once: %q", got, want)
 	}
 }

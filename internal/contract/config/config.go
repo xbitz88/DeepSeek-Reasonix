@@ -459,7 +459,7 @@ func (c *Config) DesktopDisplayMode() string {
 func (c *Config) DesktopConversationWidth() string {
 	if c != nil {
 		switch w := strings.ToLower(strings.TrimSpace(c.Desktop.ConversationWidth)); w {
-		case "full", "full-all":
+		case "full", "full-all", "custom":
 			return w
 		}
 	}
@@ -588,16 +588,6 @@ func (c *Config) DesktopUpdateChannel() string {
 		return "stable"
 	}
 	return NormalizeDesktopUpdateChannel(c.Desktop.UpdateChannel)
-}
-
-// ColdResumePruneEnabled reports whether stale tool results are elided when a
-// session resumes past the provider cache window. Default true (cheaper cold
-// restart); users keep full history by disabling it.
-func (c *Config) ColdResumePruneEnabled() bool {
-	if c == nil || c.Agent.ColdResumePrune == nil {
-		return true
-	}
-	return *c.Agent.ColdResumePrune
 }
 
 // ResponseLanguage normalizes the top-level language preference for final
@@ -792,22 +782,6 @@ func (c *Config) NetworkProxyMode() string {
 // while keeping them manageable. DisableImplicitInvocation keeps skills
 // discoverable to the host for explicit /skill use and management, but hides
 // their index and model-facing invocation tools.
-// MemoryConfig bounds what saved memory costs, and every axis ships off. The
-// prefix index and pinned bodies are paid for once per session and automatic
-// recall rides each turn's tail; how much of that is worth paying is the
-// user's call, so unset means unbounded rather than a number picked here.
-// `/memory` reports what the current store actually costs.
-type MemoryConfig struct {
-	// PinnedBudgetChars caps total pinned-body runes at write time. 0 = off.
-	PinnedBudgetChars int `toml:"pinned_budget_chars"`
-	// RecallLimit is how many facts automatic recall may inject per turn.
-	// 0 selects the default (4).
-	RecallLimit int `toml:"recall_limit"`
-	// RecallMaxChars bounds that injection's total size. 0 selects the
-	// default (2400). Each hit's snippet gets an equal share.
-	RecallMaxChars int `toml:"recall_max_chars"`
-}
-
 type SkillsConfig struct {
 	Paths                     []string `toml:"paths"`
 	ExcludedPaths             []string `toml:"excluded_paths"`
@@ -1115,17 +1089,6 @@ type AgentConfig struct {
 	MaxSideSessions    int               `toml:"max_side_sessions"`    // 0 (default) opens as many side conversations as asked; the user file only
 	MaxQueuedInputs    int               `toml:"max_queued_inputs"`    // 0 (default) queues as many prompts as asked; the user file only
 	MaxProviderRetries int               `toml:"max_provider_retries"` // default 10; 0 retries until cancelled; the user file only
-	// Guidance sent to a running sub-agent: the bytes in one message (default 16384,
-	// which keeps one message from filling the child's context) and the messages
-	// per minute to one sub-agent (default 30, a stop for a loop); 0 lifts either.
-	SubagentSteerBytes     int `toml:"max_subagent_steer_bytes"`       // the user file only
-	SubagentSteerPerMinute int `toml:"max_subagent_steers_per_minute"` // the user file only
-	// TaskCostBudget lands a task on one summary once it spends this much.
-	TaskCostBudget float64 `toml:"task_cost_budget"`
-	// TaskTimeBudgetMinutes is the same gate on wall clock. All three ship off.
-	TaskTimeBudgetMinutes float64 `toml:"task_time_budget_minutes"`
-	// The same gate on cumulative prompt+output tokens, cached input included.
-	TaskTokenBudget int `toml:"task_token_budget"`
 	// GoalTokenBudget bounds an unattended Goal loop by cumulative tokens.
 	// Off unless set: a Goal runs until it finishes or you stop it.
 	GoalTokenBudget int `toml:"goal_token_budget"`
@@ -1137,12 +1100,11 @@ type AgentConfig struct {
 	// declare non-overlapping write_paths. 0, the default, sets no limit: the
 	// path claims keep writers apart, not a count. The user file only.
 	MaxParallelWriters int    `toml:"max_parallel_writers"`
-	SubagentClaims     string `toml:"subagent_claims"`   // "optimistic" (default) or "strict"; the user file only
-	WriteLease         string `toml:"write_lease"`       // "optimistic" (default) or "strict"; the user file only
-	PlanApproval       string `toml:"plan_approval"`     // "ask" (default) or "auto": the plan card answers itself; the user file only
-	DefaultMode        string `toml:"default_mode"`      // "normal" (default) or "plan": how a new conversation starts; the user file only
-	GoalAutoRetry      int    `toml:"goal_auto_retry"`   // 0 (default) stops at an unavailable completion check; N retries it up to N times in a row; the user file only
-	HostVerification   string `toml:"host_verification"` // unset (the default), "on" or "off"; the user file only
+	SubagentClaims     string `toml:"subagent_claims"` // "optimistic" (default) or "strict"; the user file only
+	WriteLease         string `toml:"write_lease"`     // "optimistic" (default) or "strict"; the user file only
+	PlanApproval       string `toml:"plan_approval"`   // "ask" (default) or "auto": the plan card answers itself; the user file only
+	DefaultMode        string `toml:"default_mode"`    // "normal" (default) or "plan": how a new conversation starts; the user file only
+	GoalAutoRetry      int    `toml:"goal_auto_retry"` // 0 (default) stops at an unavailable completion check; N retries it up to N times in a row; the user file only
 
 	// WriteLeaseMaxWaitMinutes bounds one wait behind another session's write
 	// claim; 0, the default, waits for as long as the turn lasts. The user file only.
@@ -1163,34 +1125,17 @@ type AgentConfig struct {
 	TurnNarration     string `toml:"turn_narration"` // brief|detailed: how much the model says between tool calls; a turn-tail instruction, user-level only
 	// Deprecated compatibility field paired with AutoPlan. Old TOML remains
 	// readable, but loading clears it and rendering omits it.
-	AutoPlanClassifier string `toml:"auto_plan_classifier"`
-	// Soft/snip/force are retired compatibility keys; only CompactRatio is active.
-	SoftCompactRatio    float64 `toml:"soft_compact_ratio"`
-	ToolResultSnipRatio float64 `toml:"tool_result_snip_ratio"`
-	CompactRatio        float64 `toml:"compact_ratio"`
-	CompactForceRatio   float64 `toml:"compact_force_ratio"`
-	// ContextEditing is retired; native tool clearing is no longer an auto path.
-	ContextEditing string `toml:"context_editing"`
-	// Keep controls which compactable messages stay verbatim beyond the current
-	// user-fact/digest floor and recent tail. Empty uses the conservative default
-	// of keeping error tool results.
-	Keep       []string `toml:"keep"`
-	RecentKeep int      `toml:"recent_keep"`
-	// UserTurnKeepTokens bounds the user's own turns carried verbatim through
-	// one fold. 0 selects 5% of the context window (floor 1024). Turns past the
-	// budget survive only through the digest, unless marked [[keep]].
-	UserTurnKeepTokens int `toml:"user_turn_keep_tokens"`
-	// FirstTurnPinTokens bounds pinning the first user turn verbatim into the
-	// fixed prefix, where it is paid for on every request. 0 selects 1500.
-	FirstTurnPinTokens int `toml:"first_turn_pin_tokens"`
+	AutoPlanClassifier string  `toml:"auto_plan_classifier"`
+	CompactRatio       float64 `toml:"compact_ratio"`
+	// Retired: a fold keeps no history verbatim, so these four are read and
+	// ignored. Old files that name them still load.
+	Keep               []string `toml:"keep"`
+	RecentKeep         int      `toml:"recent_keep"`
+	UserTurnKeepTokens int      `toml:"user_turn_keep_tokens"`
+	FirstTurnPinTokens int      `toml:"first_turn_pin_tokens"`
 	// CheckpointCeilingRatio is how small an automatic fold's result must be,
 	// as a fraction of the window, before it is accepted. 0 selects 0.50.
 	CheckpointCeilingRatio float64 `toml:"checkpoint_ceiling_ratio"`
-	// Folds on input size, not window share: 1M declared makes 300k legal, never economical.
-	ContextSoftLimitTokens int `toml:"context_soft_limit_tokens"`
-	// ColdResumePrune elides stale tool results when a session reopens past the
-	// provider cache window. nil = default enabled.
-	ColdResumePrune *bool `toml:"cold_resume_prune"`
 	// EmbeddedDiffDetection marks a shell result that is a whole unified diff; nil = off.
 	EmbeddedDiffDetection *bool             `toml:"embedded_diff_detection"`
 	AskTimeoutSeconds     AskTimeoutSetting `toml:"ask_timeout_seconds"` // user file only; 0 waits
@@ -1391,15 +1336,9 @@ func Default() *Config {
 			PlannerMaxSteps: 0,
 			AutoPlan:        "off",
 			// Soft/snip/force are load-only compatibility; CompactRatio alone drives maintenance.
-			SoftCompactRatio:       0,
-			ToolResultSnipRatio:    0,
-			CompactRatio:           0.85,
-			CompactForceRatio:      0,
-			ContextEditing:         "",
+			CompactRatio:           0.90,
 			MaxSubagentDepth:       8,
 			MaxProviderRetries:     10,
-			SubagentSteerBytes:     16384,
-			SubagentSteerPerMinute: 30,
 			MaxSubagentConcurrency: 0,
 			MaxParallelWriters:     0,
 			SubagentClaims:         "optimistic",

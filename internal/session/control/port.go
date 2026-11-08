@@ -67,7 +67,6 @@ type TurnControl interface {
 	// *Controller for tests. All of them now take display before input — they
 	// are pairs of strings, and the odd one out was a swap no compiler catches.
 	SubmitDisplay(display, input string)
-	SubmitDeliveryRecovery(display, input string)
 	SubmitInvocationDisplay(display, input string, invocations []InvocationRequest)
 	SubmitHTTPFormat(input, format string) Admission
 	Send(input string)
@@ -176,6 +175,7 @@ type SessionHistory interface {
 	CommitFileRevert(planID string, resolution checkpoint.ConflictResolution) (checkpoint.RewindResult, error)
 	Branch(name string) (string, error)
 	BranchAt(turn int, name string) (string, error)
+	ForkSessionTail(sourcePath string) (path string, dropped int, err error)
 	Branches() ([]sessionstore.BranchInfo, error)
 	BranchTreeText() string
 	SwitchBranch(ref string) (sessionstore.BranchInfo, error)
@@ -196,6 +196,10 @@ type MemoryControl interface {
 	SaveDoc(path, body string) (string, error)
 	SaveMemory(m memory.Memory) (string, error)
 	ForgetMemory(name string) error
+	ConfirmMemory(name string) error
+	MemorySuggestions() []MemorySuggestion
+	AcceptMemorySuggestion(id string, edited *memory.Memory) (string, error)
+	DismissMemorySuggestion(id string) error
 	QueueMemory(note string, delivered ...memory.Memory)
 	MemoryRevisions(ref string) ([]memory.Memory, error)
 	RestoreMemory(ref string, revision int) (memory.Memory, error)
@@ -285,6 +289,9 @@ type RuntimeSettings interface {
 	NetworkSettings() NetworkSettings
 	SaveNetworkSettings(in NetworkSettings, password string, clearPassword bool) error
 	DiagnoseNetwork(ctx context.Context) []NetworkProbe
+	ProviderHealth(ctx context.Context, name string) (ProviderHealthReading, error)
+	ProviderHealthSettings() (ProviderHealthSettings, error)
+	SaveProviderHealthSettings(enabled bool) error
 	ShellSettings() ShellSettings
 	SaveShellSettings(prefer, path string, args ...string) error
 	PermissionRules() PermissionRules
@@ -305,8 +312,6 @@ type RuntimeSettings interface {
 	SavePresentFilesSettings(enabled bool) error
 	SubagentClaimsSettings() SubagentClaimsSettings
 	SaveSubagentClaimsSettings(optimistic bool) error
-	SubagentSteerSettings() SubagentSteerSettings
-	SaveSubagentSteerSettings(maxBytes, perMinute int) error
 	WriteLeaseSettings() WriteLeaseSettings
 	SaveWriteLeaseSettings(optimistic *bool, maxWaitMinutes *int) error
 	PlanApprovalSettings() PlanApprovalSettings
@@ -316,7 +321,6 @@ type RuntimeSettings interface {
 	ToolSettings() ToolSettings
 	SaveToolDisabled(name string, disabled bool) error
 	CompactionSettings() CompactionSettings
-	SaveCompactionSettings(softLimitTokens int) error
 	DisplayCurrencySettings() DisplayCurrencySettings
 	SaveDisplayCurrency(mode string) error
 	ChangedFilesSettings() ChangedFilesSettings
@@ -327,6 +331,9 @@ type RuntimeSettings interface {
 	SaveObservabilitySettings(patch ObservabilityPatch) (ObservabilitySettings, error)
 	FoldWorkSettings() FoldWorkSettings
 	SaveFoldWorkSettings(fold bool) error
+	MemoryProactiveSettings() MemoryProactiveSettings
+	SaveMemoryProactive(mode string) error
+	ChangedSettings() ChangedSettings
 	TurnNarrationSettings() TurnNarrationSettings
 	SaveTurnNarrationSettings(level string) error
 	PersonaSettings() PersonaSettings
@@ -343,8 +350,6 @@ type RuntimeSettings interface {
 	AutoArchiveSettings() AutoArchiveSettings
 	SaveAutoArchiveSettings(in AutoArchiveSettings) error
 	ArchiveInactiveSessions() int
-	ReceiptSettings() ReceiptSettings
-	SaveReceiptSettings(show bool) error
 	ConfigProblem() *ConfigProblem
 	RepairConfigFile() (string, error)
 }
@@ -395,6 +400,7 @@ type Status interface {
 	Balance(ctx context.Context) billing.Reading
 	Tariff() (pricing.Tariff, bool)
 	Jobs() []jobs.View
+	EndedJobs() []jobs.View
 	Todos() []evidence.TodoItem
 	BrowserTabs() []browser.TabInfo
 	// One browser, one list of tabs: what the window opens the agent can drive,
@@ -442,9 +448,6 @@ type PeerMail interface {
 type SubagentView interface {
 	SubagentRuns() ([]delegation.RunInfo, error)
 	SubagentTranscript(ref string, after, limit int) (delegation.RunTranscript, error)
-	// SteerSubagent sends the person's guidance to a running sub-agent; see the
-	// delegation errors for what is refused and why.
-	SteerSubagent(ref, text string) error
 }
 
 // Mods is Claude Code mods: which are installed and what became of each, and the

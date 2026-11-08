@@ -11,7 +11,6 @@ const (
 	NoticeCodeCheckpointRecordingFailed                         = "checkpoint_recording_failed"
 	NoticeCodeTurnIdentityMismatch                              = "turn_identity_mismatch"
 	NoticeCodePlanAutoApproved                                  = "plan_auto_approved"
-	NoticeCodeFinalReadiness                                    = "final_readiness"
 	NoticeCodeEmptyFinal                                        = "empty_final"
 	NoticeCodeExecutorHandoff                                   = "executor_handoff"
 	NoticeCodeToolBudget                                        = "tool_budget"
@@ -60,6 +59,9 @@ const (
 	NoticeCodeMCPToolsFollowed = "mcp_tools_followed"
 	// An MCP server refused a call for want of access the user did not grant; Detail is the server name.
 	NoticeCodeMCPScopeUpgrade = "mcp_scope_upgrade"
+	// A message from another session reached this one and waits for the person. It is
+	// operator-only: nothing is drawn for it, but a window reads the session list again.
+	NoticeCodePeerMessageArrived = "peer_message_arrived"
 	// A conversation opened from a 1.x log went on in a new session of its own.
 	NoticeCodeSessionContinuedFrom1x = "session_continued_from_1x"
 	// The user config names a default approval mode this build does not know; it loads as ask.
@@ -114,6 +116,10 @@ const (
 	NoticeCodeInboxUnrecovered = "inbox_unrecovered"
 	// A context fold finished; Detail is the CompactionNotice payload, its text the English fallback.
 	NoticeCodeCompactionTelemetry = "compaction_telemetry"
+	// A fold left earlier user turns only in the summary; Detail is the TurnsDropped payload, its text the English fallback.
+	NoticeCodeUserTurnsDropped = "user_turns_dropped"
+	// A fold left turns marked [[keep]] only in the summary; Detail is the TurnsDropped payload, its text the English fallback.
+	NoticeCodeKeptTurnsFolded = "kept_turns_folded"
 	// A background job started; Detail is the JobNotice payload, its text the English fallback.
 	NoticeCodeJobStarted = "job_started"
 	// A background job ended; Detail is the JobNotice payload, its text the English fallback.

@@ -59,23 +59,10 @@ type RunMetrics struct {
 	// CompletionVerdict and CompletionGapKinds are the turn's own verdict on
 	// itself. Outcome answers only whether the run errored, so without these a
 	// reader is told "success" by a file the same run warned a human about.
-	CompletionVerdict                string   `json:"completion_verdict,omitempty"`
-	CompletionGapKinds               []string `json:"completion_gap_kinds,omitempty"`
-	Estimated                        bool     `json:"estimated,omitempty"`
-	Compactions                      int      `json:"compactions"`
-	ReadinessChecks                  int      `json:"readiness_checks"`
-	ReadinessAllowed                 int      `json:"readiness_allowed"`
-	ReadinessBlocks                  int      `json:"readiness_blocks"`
-	ReadinessRecoveries              int      `json:"readiness_recoveries"`
-	ReadinessErrors                  int      `json:"readiness_errors"`
-	ReadinessMissingProjectChecks    int      `json:"readiness_missing_project_checks"`
-	ReadinessIncompleteTodos         int      `json:"readiness_incomplete_todos"`
-	ReadinessMissingAcceptance       int      `json:"readiness_missing_acceptance_criteria"`
-	ReadinessMissingVerification     int      `json:"readiness_missing_verification"`
-	ReadinessMissingStructuredReview int      `json:"readiness_missing_structured_review"`
-	ReadinessMissingPathInspection   int      `json:"readiness_missing_path_inspection"`
-	ReadinessMissingSignoff          int      `json:"readiness_missing_signoff"`
-	ReadinessMissingMutation         int      `json:"readiness_missing_mutation"`
+	CompletionVerdict  string   `json:"completion_verdict,omitempty"`
+	CompletionGapKinds []string `json:"completion_gap_kinds,omitempty"`
+	Estimated          bool     `json:"estimated,omitempty"`
+	Compactions        int      `json:"compactions"`
 	// Project-check shadow: the two derivations compared, by what explains a
 	// disagreement. Only the last two classes are candidate defects.
 	ProjectCheckProbes            int `json:"project_check_probes"`
@@ -88,51 +75,19 @@ type RunMetrics struct {
 	// Delegation counters let one model be compared across orchestration arms
 	// without scraping prose. Child tool calls are already split out as
 	// SubagentToolCalls below; parent calls are ToolCalls minus that.
-	SubagentRuns          int `json:"subagent_runs,omitempty"`
-	SubagentNestedRuns    int `json:"subagent_nested_runs,omitempty"`
-	SubagentMutations     int `json:"subagent_mutations,omitempty"`
-	CompletionReports     int `json:"completion_reports,omitempty"`
-	CompletionsProsedOnly int `json:"completions_prose_only,omitempty"`
-	FalseCompletions      int `json:"false_completions,omitempty"`
-	CriterionDowngrades   int `json:"criterion_downgrades,omitempty"`
-	WriteScopeViolations  int `json:"write_scope_violations,omitempty"`
-	DuplicateWorkPaths    int `json:"duplicate_work_paths,omitempty"`
-	ParentScopeHints      int `json:"parent_scope_hints,omitempty"`
-	ParentNamedFiles      int `json:"parent_named_files,omitempty"`
-	ChildEvidencePaths    int `json:"child_evidence_paths,omitempty"`
-	ChildDiscoveredPaths  int `json:"child_discovered_paths,omitempty"`
-	// Subagent handoff: whether a delegated child closed the way it was asked
-	// to. Judged is the denominator — expected to report and not killed by the
-	// provider — because a run that never got to close is not a refusal.
-	SubagentHandoffs          int            `json:"subagent_handoffs"`
-	SubagentHandoffExpected   int            `json:"subagent_handoff_expected"`
-	SubagentHandoffJudged     int            `json:"subagent_handoff_judged"`
-	SubagentHandoffAttempted  int            `json:"subagent_handoff_attempted"`
-	SubagentHandoffAccepted   int            `json:"subagent_handoff_accepted"`
-	SubagentHandoffMalformed  int            `json:"subagent_handoff_malformed"`
-	SubagentHandoffClosed     int            `json:"subagent_handoff_closed"`
-	SubagentHandoffNeedsWork  int            `json:"subagent_handoff_needs_work"`
-	SubagentHandoffNotTried   int            `json:"subagent_handoff_never_attempted"`
-	SubagentHandoffClosedWith int            `json:"subagent_handoff_closed_with_report"`
-	SubagentHandoffToolsAfter int            `json:"subagent_handoff_tool_calls_after_report"`
-	SubagentHandoffLowered    int            `json:"subagent_handoff_lowered_claims"`
-	SubagentHandoffReadOnly   int            `json:"subagent_handoff_read_only"`
-	SubagentHandoffExits      map[string]int `json:"subagent_handoff_exits,omitempty"`
+	SubagentRuns         int `json:"subagent_runs,omitempty"`
+	SubagentNestedRuns   int `json:"subagent_nested_runs,omitempty"`
+	SubagentMutations    int `json:"subagent_mutations,omitempty"`
+	WriteScopeViolations int `json:"write_scope_violations,omitempty"`
+	DuplicateWorkPaths   int `json:"duplicate_work_paths,omitempty"`
+	ParentScopeHints     int `json:"parent_scope_hints,omitempty"`
+	ParentNamedFiles     int `json:"parent_named_files,omitempty"`
+	ChildEvidencePaths   int `json:"child_evidence_paths,omitempty"`
+	ChildDiscoveredPaths int `json:"child_discovered_paths,omitempty"`
 	// Repairs that happened inside a delegated run rather than the parent's own
 	// loop, so a child that continued only because the host pulled it back is
 	// not read as one that continued on its own.
 	SubagentRecoveries int `json:"subagent_recoveries"`
-	// Goal resumes that carried a frozen verification contract, and how many of
-	// those found the current declaration naming different criteria. Neither
-	// says which declaration should govern.
-	GoalResumesWithContract    int `json:"goal_resumes_with_verification_contract"`
-	GoalVerificationDrifts     int `json:"goal_verification_contract_drifts"`
-	MissingReasoningDetected   int `json:"missing_reasoning_detected,omitempty"`
-	MissingReasoningRetries    int `json:"missing_reasoning_retries,omitempty"`
-	MissingReasoningRecovered  int `json:"missing_reasoning_recovered,omitempty"`
-	MissingReasoningReplaced   int `json:"missing_reasoning_retry_replaced_response,omitempty"`
-	MissingReasoningSuppressed int `json:"missing_reasoning_retry_suppressed,omitempty"`
-	MissingReasoningFallbacks  int `json:"missing_reasoning_fallbacks,omitempty"`
 	// Fanout times what the delegation counters only count: what the run waited
 	// on its fan-outs, against what the same work costs one at a time.
 	Fanout *FanoutMetrics `json:"fanout,omitempty"`
@@ -478,21 +433,12 @@ func (s *metricsSink) RecordDelegationAudit(a hostaudit.DelegationAudit) {
 	}
 	s.m.SubagentMutations += a.Mutations
 	s.m.WriteScopeViolations += a.ClaimViolations
-	s.m.CriterionDowngrades += a.Downgrades
 	// Summed, never averaged: an independence rate is a ratio of these totals,
 	// so a child that read two files cannot outweigh one that read forty.
 	s.m.ParentScopeHints += a.ParentScopeHints
 	s.m.ParentNamedFiles += a.ParentNamedFiles
 	s.m.ChildEvidencePaths += a.EvidencePaths
 	s.m.ChildDiscoveredPaths += a.DiscoveredPaths
-	if a.HasReport {
-		s.m.CompletionReports++
-	} else {
-		s.m.CompletionsProsedOnly++
-	}
-	if a.FalseCompletion() {
-		s.m.FalseCompletions++
-	}
 	if s.childMutations == nil {
 		s.childMutations = map[string]int{}
 	}
@@ -502,147 +448,6 @@ func (s *metricsSink) RecordDelegationAudit(a hostaudit.DelegationAudit) {
 			s.m.DuplicateWorkPaths++
 		}
 	}
-}
-
-func (s *metricsSink) RecordReadinessAudit(a hostaudit.ReadinessAudit) {
-	if s == nil {
-		return
-	}
-	defer event.RecordReadinessAudit(s.inner, a)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m.ReadinessChecks++
-	switch a.Result {
-	case hostaudit.ReadinessAllowed:
-		s.m.ReadinessAllowed++
-	case hostaudit.ReadinessBlocked:
-		s.m.ReadinessBlocks++
-	case hostaudit.ReadinessErrored:
-		s.m.ReadinessErrors++
-	}
-	if a.Recovered {
-		s.m.ReadinessRecoveries++
-	}
-	s.m.ReadinessMissingProjectChecks += a.MissingProjectChecks
-	s.m.ReadinessIncompleteTodos += a.IncompleteTodos
-	s.m.ReadinessMissingAcceptance += a.MissingAcceptanceCriteria
-	s.m.ReadinessMissingVerification += a.MissingVerification
-	s.m.ReadinessMissingStructuredReview += a.MissingStructuredReview
-	s.m.ReadinessMissingPathInspection += a.MissingPathInspection
-	s.m.ReadinessMissingSignoff += a.MissingSignoff
-	s.m.ReadinessMissingMutation += a.MissingMutation
-}
-
-func (s *metricsSink) RecordVerificationContractDrift(d event.VerificationContractDrift) {
-	if s == nil {
-		return
-	}
-	defer event.RecordVerificationContractDrift(s.inner, d)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m.GoalResumesWithContract++
-	if d.Drift {
-		s.m.GoalVerificationDrifts++
-	}
-}
-
-func (s *metricsSink) RecordSubagentHandoff(a event.SubagentHandoffAudit) {
-	if s == nil {
-		return
-	}
-	defer event.RecordSubagentHandoff(s.inner, a)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m.SubagentHandoffs++
-	if a.Exit != "" {
-		if s.m.SubagentHandoffExits == nil {
-			s.m.SubagentHandoffExits = map[string]int{}
-		}
-		s.m.SubagentHandoffExits[a.Exit]++
-	}
-	if a.Expected {
-		s.m.SubagentHandoffExpected++
-	}
-	// A run the provider killed never reached the point of closing, so it
-	// leaves the compliance denominator instead of counting as a refusal.
-	if !a.Expected || a.Exit != "completed" {
-		return
-	}
-	s.m.SubagentHandoffJudged++
-	if a.ReadOnly {
-		s.m.SubagentHandoffReadOnly++
-	}
-	if a.Attempts == 0 {
-		s.m.SubagentHandoffNotTried++
-	} else {
-		s.m.SubagentHandoffAttempted++
-	}
-	if a.Accepted > 0 {
-		s.m.SubagentHandoffAccepted++
-	}
-	if a.Malformed > 0 {
-		s.m.SubagentHandoffMalformed++
-	}
-	if a.ReportRound > 0 && a.ToolCallsAfterReport == 0 {
-		s.m.SubagentHandoffClosedWith++
-	}
-	s.m.SubagentHandoffClosed += a.Closed
-	s.m.SubagentHandoffNeedsWork += a.NeedsWork
-	s.m.SubagentHandoffToolsAfter += a.ToolCallsAfterReport
-	s.m.SubagentHandoffLowered += a.LoweredClaims
-}
-
-func (s *metricsSink) RecordProjectCheckProbe(p event.ProjectCheckProbe) {
-	if s == nil {
-		return
-	}
-	defer event.RecordProjectCheckProbe(s.inner, p)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m.ProjectCheckProbes++
-	if p.LegacyBlocked == p.CandidateBlocked {
-		s.m.ProjectCheckStopParity++
-	}
-	for _, d := range p.Diffs {
-		switch d.Class {
-		case event.ProjectCheckBaselinePreservation:
-			s.m.ProjectCheckBaselinePreserved++
-		case event.ProjectCheckMutationIndex:
-			s.m.ProjectCheckMutationIndex++
-		case event.ProjectCheckIdentityNormalization:
-			s.m.ProjectCheckIdentityNorm++
-		case event.ProjectCheckCandidateOnly:
-			s.m.ProjectCheckCandidateOnly++
-		case event.ProjectCheckLegacyOnly:
-			s.m.ProjectCheckLegacyOnly++
-		}
-	}
-}
-
-func (s *metricsSink) RecordProtocolRecovery(a event.ProtocolRecoveryAudit) {
-	s.mu.Lock()
-	switch a.Kind {
-	case event.ProtocolRecoveryMissingReasoningDetected:
-		s.m.MissingReasoningDetected++
-	case event.ProtocolRecoveryMissingReasoningRetryAttempted:
-		s.m.MissingReasoningRetries++
-		// Usage from the original and recovery responses is intentionally merged
-		// into one invisible UI event, but Steps remains a true model-call count.
-		s.m.Steps++
-	case event.ProtocolRecoveryMissingReasoningRetryRecovered:
-		s.m.MissingReasoningRecovered++
-	case event.ProtocolRecoveryMissingReasoningRetryReplaced:
-		s.m.MissingReasoningReplaced++
-	case event.ProtocolRecoveryMissingReasoningRetrySuppressed:
-		s.m.MissingReasoningSuppressed++
-	case event.ProtocolRecoveryMissingReasoningFallback:
-		s.m.MissingReasoningFallbacks++
-	}
-	s.mu.Unlock()
-	if a.ChildID != "" {
-		s.m.SubagentRecoveries++
-	}
-	event.RecordProtocolRecovery(s.inner, a)
 }
 
 // MergeCapabilityAuditCounters copies capability counters into RunMetrics.

@@ -3,6 +3,7 @@ import { useModalFocus } from "./useModalFocus";
 import { t } from "../i18n";
 import { host, type BrowserLogin as Ask } from "../port/host";
 import { listenAction } from "./listen";
+import { StudioIcon } from "./StudioIcon";
 
 // A page or a proxy in the built-in browser asking for a login. Without an
 // answer Electron cancels it, which is how an intranet site behind Basic or
@@ -45,38 +46,44 @@ function LoginCard({ ask, onAnswer }: { ask: Ask; onAnswer: (username: string, p
   const submit = () => username && onAnswer(username, password);
   return (
     <div ref={sheet} className="askveil" role="dialog" aria-modal="true" aria-labelledby="blogin-t">
-      <div className="askcard">
-        <h2 id="blogin-t">{ask.proxy ? t("代理 {host} 需要登录", { host: where }) : t("{host} 需要登录", { host: where })}</h2>
-        <p className="h">
-          {ask.realm ? t("站点提示：{realm}。", { realm: ask.realm }) : ""}
-          {t("用户名和密码只交给这个网页，不会保存，也不会发给 Reasonix 或模型。")}
-        </p>
-        <input
-          ref={first}
-          data-action-keydown="browser.login"
-          value={username}
-          autoComplete="username"
-          placeholder={t("用户名")}
-          aria-label={t("用户名")}
-          onChange={(e) => setUsername(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        <input
-          data-action-keydown="browser.login"
-          type="password"
-          value={password}
-          autoComplete="current-password"
-          placeholder={t("密码")}
-          aria-label={t("密码")}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        <div className="askact">
-          <button data-action="browser.login" data-value="cancel" onClick={() => onAnswer("", "")}>
-            {t("取消")}
+      <div className="blogin">
+        <div className="blogin-head">
+          <b id="blogin-t">{ask.proxy ? t("workbench.the_proxy_host_asks_you", { host: where }) : t("workbench.host_asks_you_to_sign", { host: where })}</b>
+          <button type="button" className="blogin-x" data-action="browser.login" data-value="cancel" aria-label={t("common.close")} title={t("common.close")}
+            onClick={() => onAnswer("", "")}>
+            <StudioIcon name="close" />
           </button>
-          <button data-action="browser.login" data-value="submit" data-go="" disabled={!username} onClick={submit}>
-            {t("登录")}
+        </div>
+        <div className="blogin-body">
+          {ask.realm && <p className="blogin-realm">{t("workbench.the_site_says_realm", { realm: ask.realm })}</p>}
+          <label htmlFor="blogin-u">{t("workbench.username")}</label>
+          <input
+            id="blogin-u"
+            ref={first}
+            data-action-keydown="browser.login"
+            value={username}
+            autoComplete="username"
+            onChange={(e) => setUsername(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+          <label htmlFor="blogin-p">{t("workbench.password")}</label>
+          <input
+            id="blogin-p"
+            data-action-keydown="browser.login"
+            type="password"
+            value={password}
+            autoComplete="current-password"
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+          <p className="blogin-note"><StudioIcon name="lock" />{t("workbench.the_username_and_password_go")}</p>
+        </div>
+        <div className="blogin-foot">
+          <button type="button" className="blogin-cancel" data-action="browser.login" data-value="cancel" onClick={() => onAnswer("", "")}>
+            {t("common.cancel")}
+          </button>
+          <button type="button" className="blogin-go" data-action="browser.login" data-value="submit" disabled={!username} onClick={submit}>
+            {t("common.sign_in")}
           </button>
         </div>
       </div>

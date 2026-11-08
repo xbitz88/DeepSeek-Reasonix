@@ -22,6 +22,8 @@ func parseMemory(name string, b []byte) Memory {
 		Title:          fm["title"],
 		Description:    fm["description"],
 		Keywords:       fm["keywords"],
+		Galaxy:         NormalizeGalaxy(fm["galaxy"]),
+		Importance:     NormalizeImportance(parsePositiveInt(fm["importance"])),
 		Activation:     NormalizeActivation(fm["activation"]),
 		Volatility:     NormalizeVolatility(fm["volatility"]),
 		SubjectKey:     NormalizeSubjectKey(fm["subject_key"]),

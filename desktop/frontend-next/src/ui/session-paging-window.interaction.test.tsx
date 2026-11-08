@@ -62,7 +62,11 @@ function pagedHub() {
   return { hub, asked, change: () => change() };
 }
 
-const filter = (name: RegExp) => screen.getAllByRole("button", { name }).find((b) => b.closest(".studio-session-segments"))!;
+const VALUE: Record<string, string> = { "全部": "all", "归档": "archived", "置顶": "pinned" };
+const filter = (name: RegExp) => {
+  const word = Object.keys(VALUE).find((w) => name.test(w))!;
+  return document.querySelector<HTMLElement>(`[data-action="session.filter"][data-value="${VALUE[word]}"]`)!;
+};
 
 it("keeps the pages the reader opened across a tree refresh", async () => {
   const { hub, asked, change } = pagedHub();
@@ -83,20 +87,23 @@ it("filters by the word on the kernel and never asks for every row", async () =>
   await userEvent.type(screen.getByRole("searchbox", { name: "搜索会话 / 项目" }), "release plan");
   await waitFor(() => expect(asked.at(-1)).toMatchObject({ scope: "", q: "release plan" }));
   expect(asked.every((window) => window?.limit !== 0)).toBe(true);
-  expect(await screen.findByText("release plan 109")).toBeTruthy();
+  // The query is marked inside the title, so the title is no longer one text node.
+  await waitFor(() => expect(document.querySelector(".rail")!.textContent).toContain("release plan 109"));
 
   await userEvent.clear(screen.getByRole("searchbox", { name: "搜索会话 / 项目" }));
   await waitFor(() => expect(asked.at(-1)).toMatchObject({ scope: "active", q: "" }));
 });
 
-it("keeps the full project total while its loaded window grows, without local-only filter badges", async () => {
+it("keeps what is left to load against the full project total while its window grows, without local-only filter badges", async () => {
   const { hub } = pagedHub();
   render(<App hub={hub} />);
-  await screen.findByRole("button", { name: /显示更多/ });
-  expect(await screen.findByLabelText(/\/ 130 会话/)).toBeTruthy();
+  const more = await screen.findByRole("button", { name: /显示更多/ });
+  const left = (label: string | null) => Number(/(\d+)/.exec(label ?? "")?.[1]);
+  const before = left(more.textContent);
   for (const scope of [/^全部/, /^归档/, /^置顶/]) expect(filter(scope).querySelector("b")).toBeNull();
-  await userEvent.click(await screen.findByRole("button", { name: /显示更多/ }));
-  await waitFor(() => expect(screen.getByLabelText(/101 \/ 130 会话/)).toBeTruthy());
+  await userEvent.click(more);
+  await waitFor(() => expect(left(screen.getByRole("button", { name: /显示更多/ }).textContent)).toBe(29));
+  expect(before).toBeGreaterThan(29);
 });
 
 it("reaches an archived conversation far outside the window instead of a dead end", async () => {
@@ -104,6 +111,7 @@ it("reaches an archived conversation far outside the window instead of a dead en
   render(<App hub={hub} />);
   await screen.findByRole("button", { name: /显示更多/ });
 
+  await userEvent.click(document.querySelector(".session-filter-trigger")!);
   await userEvent.click(filter(/^归档/));
   await waitFor(() => expect(asked.at(-1)).toMatchObject({ scope: "archived" }));
   expect(await screen.findByText("chat 0")).toBeTruthy();
@@ -115,6 +123,7 @@ it("shows the pinned conversation that is far outside the window", async () => {
   const { hub } = pagedHub();
   render(<App hub={hub} />);
   await screen.findByRole("button", { name: /显示更多/ });
+  await userEvent.click(document.querySelector(".session-filter-trigger")!);
   await userEvent.click(filter(/^置顶/));
   expect(await screen.findByText("chat 5")).toBeTruthy();
 });

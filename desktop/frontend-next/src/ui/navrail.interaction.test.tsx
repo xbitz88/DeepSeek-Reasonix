@@ -22,6 +22,7 @@ beforeEach(async () => {
   sessionStorage.clear();
   localStorage.clear();
   localStorage.setItem(STORAGE, "zh");
+  localStorage.setItem(KEY, "on");
   boot();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   HTMLElement.prototype.setPointerCapture = vi.fn();
@@ -56,11 +57,11 @@ async function open() {
 const nav = () => screen.queryByRole("navigation", { name: "主导航" });
 const navEl = () => document.querySelector<HTMLElement>("nav.nav");
 const app = () => document.querySelector<HTMLElement>(".app")!;
-const toggleSidebar = () => userEvent.click(document.querySelector<HTMLElement>(".gutter-l .grip")!);
+const toggleSidebar = () => userEvent.keyboard("{Control>}b{/Control}");
 
 async function openAppearance() {
   await userEvent.click(document.querySelector<HTMLElement>('[data-action="chrome.settings"]')!);
-  await userEvent.click(await screen.findByRole("tab", { name: /外观/ }));
+  await userEvent.click(await screen.findByRole("tab", { name: /^操作与性能/ }));
   await screen.findByRole("group", { name: "图标栏" });
 }
 const choice = (name: string) => screen.getByRole("button", { name });
@@ -72,7 +73,14 @@ it("offers the tools destination only through the navigation entries, not a seco
   expect(within(screen.getByRole("navigation", { name: "主导航" })).getByRole("button", { name: "工具与权限" })).toBeTruthy();
 });
 
-it("always draws the rail by default, with every entry in it", async () => {
+it("draws no rail until one is chosen", async () => {
+  localStorage.removeItem(KEY);
+  await open();
+  expect(nav()).toBeNull();
+  expect(app().dataset.nav).toBe("off");
+});
+
+it("draws the rail when it is chosen, with every entry in it", async () => {
   await open();
   expect(nav()).not.toBeNull();
   expect(app().dataset.nav).toBe("on");
@@ -83,14 +91,15 @@ it("always draws the rail by default, with every entry in it", async () => {
 });
 
 it.each([
-  [null, "on"],
+  [null, "off"],
   ["on", "on"],
   ["off", "off"],
   ["collapsed", "collapsed"],
-  ["true", "on"],
-  ["", "on"],
+  ["true", "off"],
+  ["", "off"],
 ])("reads a stored %j as %s", async (stored, mode) => {
-  if (stored !== null) localStorage.setItem(KEY, stored);
+  if (stored === null) localStorage.removeItem(KEY);
+  else localStorage.setItem(KEY, stored);
   await open();
   await openAppearance();
   const label = { on: "始终显示", collapsed: "仅侧栏收起时显示", off: "不显示" }[mode as "on"];
@@ -150,7 +159,7 @@ it("still reaches settings with the rail off", async () => {
   await open();
   const footer = document.querySelector<HTMLElement>(".railfoot")!;
   expect(footer).not.toBeNull();
-  for (const name of ["钱包与用量", "发送反馈", "账号", "设置"]) {
+  for (const name of ["用量", "发送反馈", "设置"]) {
     expect(within(footer).getByRole("button", { name: new RegExp(`^${name}`) }), name).toBeTruthy();
   }
   await openAppearance();
@@ -161,7 +170,9 @@ it.each(["on", "off"])("reaches usage, account, and settings with the rail %s", 
   localStorage.setItem(KEY, mode);
   await open();
   const entries = mode === "on" ? navEl()! : document.querySelector<HTMLElement>(".railfoot")!;
-  for (const [label, section, action] of [[mode === "on" ? "用量" : "钱包与用量", "usage"], ["账号", "account", "chrome.account"], ["设置", "session", "chrome.settings"]]) {
+  const account = mode === "on" ? [["账号", "account", "chrome.account"]] : [];
+  if (mode === "off") expect(entries.querySelector('[data-action="chrome.account"]')).toBeNull();
+  for (const [label, section, action] of [["用量", "storage"], ...account, ["设置", "session", "chrome.settings"]]) {
     const button = within(entries).getByRole("button", { name: new RegExp(`^${label}`) });
     if (action) expect(entries.querySelector(`[data-action="${action}"]`)).toBe(button);
     await userEvent.click(button);
@@ -230,7 +241,7 @@ it("the conversation item opens and closes the workspace column, and from settin
 it("keeps desktop navigation usable after closing settings without a top toggle", async () => {
   await open();
   await userEvent.click(within(navEl()!).getByRole("button", { name: /^用量/ }));
-  expect(document.querySelector(".studio-menu")).toBeNull();
+  expect(document.querySelector(".studio-menu") !== null).toBe(app().dataset.rail === "off");
   expect(app().dataset.rail).toBe("on");
   await userEvent.keyboard("{Escape}");
   await toggleSidebar();
@@ -255,14 +266,14 @@ it("uses only the divider to collapse and reopen the desktop sidebar", async () 
   await open();
   const toggles = screen.queryAllByRole("button", { name: /收起工作区栏|展开工作区栏/ }).filter((b) => b.tabIndex !== -1);
   expect(toggles).toHaveLength(0);
-  expect(document.querySelector(".studio-menu")).toBeNull();
+  expect(document.querySelector(".studio-menu") !== null).toBe(app().dataset.rail === "off");
   expect(document.querySelector(".studio-quicknav")).toBeNull();
   await toggleSidebar();
   expect(app().dataset.rail).toBe("off");
   expect(screen.getByRole("separator", { name: "调整工作区栏宽度" }).getAttribute("aria-valuenow")).toBe("0");
   await toggleSidebar();
   expect(app().dataset.rail).toBe("on");
-  expect(document.querySelector(".studio-menu")).toBeNull();
+  expect(document.querySelector(".studio-menu") !== null).toBe(app().dataset.rail === "off");
 });
 
 it("remembers divider width through collapse, reopen, and reload with the icon rail off", async () => {
@@ -271,23 +282,23 @@ it("remembers divider width through collapse, reopen, and reload with the icon r
   const divider = screen.getByRole("separator", { name: "调整工作区栏宽度" });
   divider.focus();
   await userEvent.keyboard("{ArrowRight}");
-  expect(divider.getAttribute("aria-valuenow")).toBe("328");
-  expect(localStorage.getItem("rx-rail-w")).toBe("328");
+  expect(divider.getAttribute("aria-valuenow")).toBe("276");
+  expect(localStorage.getItem("rx-rail-w")).toBe("276");
   await userEvent.keyboard("{Enter}");
   expect(app().dataset.rail).toBe("off");
   await userEvent.keyboard(" ");
   expect(app().dataset.rail).toBe("on");
-  expect(divider.getAttribute("aria-valuenow")).toBe("328");
+  expect(divider.getAttribute("aria-valuenow")).toBe("276");
   first.view.unmount();
   await open();
-  expect(screen.getByRole("separator", { name: "调整工作区栏宽度" }).getAttribute("aria-valuenow")).toBe("328");
+  expect(screen.getByRole("separator", { name: "调整工作区栏宽度" }).getAttribute("aria-valuenow")).toBe("276");
 });
 
 it.each(["on", "off"])("keeps one drawer entry at the scene boundary with the icon rail %s", async (mode) => {
   localStorage.setItem(KEY, mode);
   await open();
   act(() => room(641));
-  expect(document.querySelector(".studio-menu")).toBeNull();
+  expect(document.querySelector(".studio-menu") !== null).toBe(app().dataset.rail === "off");
   act(() => room(640));
   const toggle = await screen.findByRole("button", { name: "展开工作区栏" });
   expect(document.querySelectorAll(".studio-menu")).toHaveLength(1);
@@ -297,20 +308,37 @@ it.each(["on", "off"])("keeps one drawer entry at the scene boundary with the ic
   await userEvent.click(toggle);
   expect(app().dataset.rail).toBe("off");
   act(() => room(390));
-  await userEvent.click(screen.getByRole("button", { name: "展开工作区栏" }));
+  await userEvent.click(screen.getByRole("button", { name: "会话列表" }));
   expect(app().dataset.rail).toBe("on");
   act(() => room(1440));
-  expect(document.querySelector(".studio-menu")).toBeNull();
+  expect(document.querySelector(".studio-menu") !== null).toBe(app().dataset.rail === "off");
   expect(app().dataset.rail).toBe("on");
   await toggleSidebar();
   act(() => room(390));
   act(() => room(1440));
   expect(app().dataset.rail).toBe("off");
-  expect(document.querySelector(".studio-menu")).toBeNull();
+  expect(document.querySelector(".studio-menu") !== null).toBe(app().dataset.rail === "off");
 });
 
 it("with the rail off the sidebar keeps its own quick entries", async () => {
   localStorage.setItem(KEY, "off");
   await open();
   expect(document.querySelector(".studio-quicknav")).not.toBeNull();
+});
+
+it("collapses and reopens the sidebar from Ctrl+B, and a collapsed sidebar is reopened by an icon that names the shortcut", async () => {
+  await open();
+  expect(app().dataset.rail).toBe("on");
+  await toggleSidebar();
+  expect(app().dataset.rail).toBe("off");
+  const icon = document.querySelector<HTMLElement>(".studio-menu")!;
+  expect(icon.getAttribute("title")).toMatch(/Ctrl B$/);
+  await userEvent.click(icon);
+  expect(app().dataset.rail).toBe("on");
+  expect(document.querySelector(".studio-menu")).toBeNull();
+});
+
+it("draws no handle on the dividers", async () => {
+  await open();
+  expect(document.querySelector(".gutter .grip")).toBeNull();
 });

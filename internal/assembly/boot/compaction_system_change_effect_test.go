@@ -47,7 +47,7 @@ func compactedSession(t *testing.T, rec *compactionEffectProvider, home, dir str
 			t.Fatalf("Run(%q): %v", prompt, err)
 		}
 	}
-	if _, carrying := digestRequests(rec.requests()); carrying == 0 {
+	if carryingProjection(rec.requests()) == 0 {
 		t.Fatal("fixture never compacted")
 	}
 	if err := from.Snapshot(); err != nil {
@@ -72,6 +72,9 @@ func adoptCollectingNotices(t *testing.T, from *control.Controller, home, dir st
 	t.Cleanup(func() { to.Close() })
 	if err := ApplyRuntimeMigration(to, from, CaptureRuntimeMigration(from)); err != nil {
 		t.Fatalf("ApplyRuntimeMigration: %v", err)
+	}
+	if from.History()[0].Content != to.History()[0].Content {
+		t.Logf("system prompt changed during migration: %q", firstDivergence(from.History()[0].Content, to.History()[0].Content))
 	}
 	return notices
 }

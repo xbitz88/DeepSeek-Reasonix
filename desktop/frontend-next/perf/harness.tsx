@@ -1,54 +1,11 @@
+import "../src/styles/legacy.css";
+import "../src/design/design.css";
 import { createRoot } from "react-dom/client";
 import { boot as bootLang } from "../src/i18n";
 import { track as trackWidth } from "../src/ui/viewport";
 import { pushToast } from "../src/state/toasts";
 import { apply as applyPack } from "../src/ui/theme";
 import { mount as mountEditor } from "./syntax-mount";
-import "../src/styles/tokens.css";
-import "../src/styles/app.css";
-import "../src/styles/dock.css";
-import "../src/styles/studio.css";
-import "../src/styles/changedpill.css";
-import "../src/styles/askskip.css";
-import "../src/styles/pastekeep.css";
-import "../src/styles/ctxitems.css";
-import "../src/styles/sidepanel.css";
-import "../src/styles/contentmatches.css";
-import "../src/styles/scrolljump.css";
-import "../src/styles/chart.css";
-import "../src/styles/community.css";
-import "../src/styles/providerpresets.css";
-import "../src/styles/sessionnotes.css";
-import "../src/styles/sessionquick.css";
-import "../src/styles/sidebardrop.css";
-import "../src/styles/sponsor.css";
-import "../src/styles/versions.css";
-import "../src/styles/phonecomposer.css";
-import "../src/styles/stophint.css";
-import "../src/styles/dialogcenter.css";
-import "../src/styles/treerows.css";
-import "../src/styles/workbench-changes.css";
-import "../src/styles/agentrun.css";
-import "../src/styles/gitgraph.css";
-import "../src/styles/tips.css";
-import "../src/styles/waitnote.css";
-import "../src/styles/bring.css";
-import "../src/styles/peerthreads.css";
-import "../src/styles/line.css";
-import "../src/styles/notice.css";
-import "../src/styles/peers.css";
-import "../src/styles/jsontext.css";
-import "../src/styles/skillpin.css";
-import "../src/styles/narrow.css";
-import "../src/styles/workfold.css";
-import "../src/styles/workbench-launcher.css";
-import "../src/styles/feedback.css";
-import "../src/styles/toasts.css";
-import "../src/styles/modelmenu.css";
-import "../src/styles/composer-menu.css";
-import "../src/styles/runsignals.css";
-import "../src/styles/overview.css";
-import "../src/styles/themes.css";
 import { App } from "../src/ui/App";
 import { MockHub } from "../src/port/mock_hub";
 import { MockPort } from "../src/port/mock";
@@ -56,7 +13,7 @@ import { fromHistory } from "../src/state/session";
 import { HttpError } from "../src/port/port";
 import type { AgentPort, Appearance, ChipCall, HistoryMessage, McpEntry } from "../src/port/port";
 import type { HistoryPage } from "../src/port/session";
-import type { UpdateProgress } from "../src/port/version";
+import type { UpdateProgress, VersionHub } from "../src/port/version";
 import type { ThemePack } from "../src/port/look";
 import type { RuntimeView, TreeWindow, TreeWorkspace } from "../src/port/hub";
 import type { WireEvent } from "../src/port/wire";
@@ -103,6 +60,7 @@ function benchPack(): ThemePack | null {
 }
 
 class BenchPort extends MockPort {
+  private driverRunning: boolean | undefined;
   opensFiles() { return query.has("deliveries") || super.opensFiles(); }
   revealsFiles() { return query.has("deliveries") || super.revealsFiles(); }
   async account() {
@@ -217,8 +175,17 @@ class BenchPort extends MockPort {
     return query.has("update") ? "notify" : super.updateMode();
   }
 
-  async versions() {
+  async versions(): Promise<VersionHub> {
     if (query.has("update")) return { current: "2.42.0", pinned: "", stalePin: false, latest: "2.43.0", newer: true, versions: [] };
+    if (query.has("versionlayout")) {
+      return {
+        current: "2.56.0", pinned: "", stalePin: false, latest: "2.57.0", newer: true,
+        versions: ["2.57.0", "2.56.1", "2.56.0", "2.55.0", "2.54.0", "2.53.1"].map((version, i) => ({
+          version, tag: `studio-v${version}`, publishedAt: new Date(Date.now() - i * 86400000).toISOString(),
+          hasNotes: i !== 4, current: i === 2, older: i > 2,
+        })),
+      };
+    }
     if (!query.has("versions")) return super.versions();
     const names = ["2.38.0", "2.37.0", "2.36.0", "2.35.0", "2.34.0", "2.33.0", "2.32.0", "2.31.0", "2.30.0", "2.29.0"];
     return {
@@ -306,12 +273,6 @@ class BenchPort extends MockPort {
   }
 
   private settingCardSent = false;
-  private receiptSent = false;
-
-  async receiptSettings() {
-    const read = await super.receiptSettings();
-    return query.has("receipt") ? { ...read, show: true } : read;
-  }
   private meterSent = false;
 
   subscribe(on: (e: WireEvent) => void) {
@@ -327,14 +288,6 @@ class BenchPort extends MockPort {
         }
       }, 500);
     }
-    if (query.has("receipt") && !this.receiptSent) {
-      this.receiptSent = true;
-      const script = "cd \"C:/Users/me/work\" && cat > \"$TMPDIR/check/verify_006.py\" <<'PYEOF'\n" + "import os, re, sys, unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 1)\n".repeat(18) + "PYEOF\npython -m unittest verify_006 2>&1 | tail -12";
-      setTimeout(() => {
-        this.feed({ kind: "turn_started", msgIndex: 9 } as unknown as WireEvent);
-        this.feed({ kind: "turn_done", receipt: { saysSomething: true, severity: "warn", gaps: [{ kind: "failed_verification", detail: script }, { kind: "inconclusive_verification", detail: "go test ./internal/... 2>&1 | tail -5" }] } } as unknown as WireEvent);
-      }, 500);
-    }
     const card = query.get("settingcard");
     if (card && !this.settingCardSent) {
       this.settingCardSent = true;
@@ -344,6 +297,8 @@ class BenchPort extends MockPort {
   }
 
   feed(ev: WireEvent) {
+    if (ev.kind === "turn_started") this.driverRunning = true;
+    if (ev.kind === "turn_done") this.driverRunning = false;
     // The driver's frames are the fixture's own frames: a fed approval has to
     // move /status the way a scripted one does, or a guard reads a card sitting
     // over a status that still says the turn is running.
@@ -383,7 +338,8 @@ class BenchPort extends MockPort {
       // Lines the person queued: the panel leaves out the host's own queued
       // continuations, so a seed of those would draw nothing.
       intent: (QUEUE_IMAGES && i === 0 ? "steer" : "followup") as "steer" | "followup",
-      state: "queued" as const,
+      state: QUEUE_STATES && i < 2 ? (i === 0 ? "blocked" as const : "uncertain" as const) : "queued" as const,
+      ...(QUEUE_STATES && i < 2 ? { blockReason: "This queued instruction needs review before delivery. ".repeat(5) } : {}),
       ...(QUEUE_IMAGES && i === 0 ? { images: true } : {}),
       // 三种长度，各有各的对照：第一条没被截断（不该弹），第二条长到撞天花板
       // （浮层要自己滚），其余是寻常的被截断行。内核把 preview 截到 120 runes，
@@ -420,6 +376,7 @@ class BenchPort extends MockPort {
       ? { turnsUsed: 4, tokensUsed: 128_400, requestsUsed: 9, workDurationMs: 12 * 60_000, noProgressTurns: usage === "blocked" ? 2 : 0, ...(usage === "blocked" ? { stopCause: "goal_stuck", lastReason: "测试一直没有通过，改动没有让失败的数量减少" } : {}) }
       : undefined;
     const st = { ...(await super.status()), ...(query.has("running") ? { running: true } : {}), ...(query.has("goal") ? { goal: query.get("goal") ?? "" } : {}), ...(usage ? { goalStatus: usage, goalRuntime } : {}), ...(query.has("fullaccess") ? { toolApprovalMode: "yolo" as const } : {}), ...(query.has("effort") ? { effort: query.get("effort") ?? "" } : {}), ...(query.has("modelref") ? { modelRef: query.get("modelref") ?? "" } : {}), ...(query.has("trustpending") ? { toolApprovalMode: "ask" as const, approvalDefault: { defaulted: true, writesConfined: true, trust: "" as const, trustable: true } } : {}) };
+    st.running = this.driverRunning ?? st.running;
     if (STATUS_MS > 0) await new Promise((r) => setTimeout(r, STATUS_MS));
     if (!JOBS) return st;
     const jobs = Array.from({ length: JOBS }, (_, i) => ({
@@ -442,10 +399,22 @@ class BenchPort extends MockPort {
     return super.switchBranch(name);
   }
 
+  async versionNotes(version: string) {
+    if (!query.has("versionlayout")) return super.versionNotes(version);
+    return { version, markdown: "# Release notes\n\nDownload and rollback improvements.", cached: false };
+  }
+
   async goToVersion() {}
 
   onUpdateProgress(cb?: (p: UpdateProgress) => void) {
     if (cb && query.has("update")) queueMicrotask(() => cb({ version: "2.43.0", phase: "ready", received: 0, total: 0 }));
+    const phase = query.get("versionlayout");
+    if (cb && (phase === "downloading" || phase === "verifying" || phase === "ready")) {
+      queueMicrotask(() => cb({
+        version: query.has("rollback") ? "2.55.0" : "2.57.0", phase,
+        received: 178_900_000, total: 183_900_000,
+      }));
+    }
     return () => {};
   }
 
@@ -498,6 +467,7 @@ const SWITCH_MS = Number(query.get("switchms") ?? 0);
 // ?queue= is how many lines are already waiting when the window opens.
 const QUEUE = Number(query.get("queue") ?? 0);
 const QUEUE_BODY = query.has("queuebody");
+const QUEUE_STATES = query.has("queuestates");
 // ?queueimages makes the first seeded line a steer that carries a picture.
 const QUEUE_IMAGES = query.has("queueimages");
 const JOBS = Number(query.get("jobs") ?? 0);
@@ -507,27 +477,27 @@ const TREE_AT = performance.now() + Number(query.get("treems") ?? 0);
 // ?panes=0 opens the window with no conversation open; ?panes=N opens N.
 // ?tree=none answers every tree read with no folders.
 const PANES = query.has("panes") ? Number(query.get("panes")) : 1;
-const NO_PANES = PANES === 0;
 
 class BenchHub extends MockHub {
   readonly feeds = new Map<string, BenchPort>();
 
+  constructor() {
+    super(PANES);
+  }
+
   // ?search=1 answers every query with two conversations that say it.
   async searchHistory(q: string) {
     if (!query.has("search")) return super.searchHistory(q);
-    return [
-      { path: "/sessions/mock.jsonl", id: "mock", snippet: `…上周讨论过要不要把 ${q} 的轮换放进发布流程，结论是每月一次…`, role: "assistant", messageIndex: 4, score: 2 },
-      { path: "/sessions/older.jsonl", id: "older", snippet: `怎么把 ${q} 配到预发环境里？`, role: "user", messageIndex: 0, score: 1 },
-    ];
+    return {
+      hits: [
+        { path: "/sessions/mock.jsonl", id: "mock", snippet: `…上周讨论过要不要把 ${q} 的轮换放进发布流程，结论是每月一次…`, role: "assistant", messageIndex: 4, score: 2 },
+        { path: "/sessions/older.jsonl", id: "older", snippet: `怎么把 ${q} 配到预发环境里？`, role: "user", messageIndex: 0, score: 1 },
+      ],
+      index: { state: "ready", indexed: 2, total: 2, failed: 0, partial: false },
+    };
   }
 
   private readonly settingsPort = new BenchPort();
-  private opened = false;
-
-  async open(req: Parameters<MockHub["open"]>[0]) {
-    this.opened = true;
-    return super.open(req);
-  }
 
   machinePort(): AgentPort {
     return this.settingsPort;
@@ -537,20 +507,6 @@ class BenchHub extends MockHub {
     let port = this.feeds.get(rt.id);
     if (!port) this.feeds.set(rt.id, (port = new BenchPort()));
     return port;
-  }
-
-  runtimes(): Promise<RuntimeView[]> {
-    if (NO_PANES && !this.opened) return Promise.resolve([]);
-    if (PANES <= 1) return super.runtimes();
-    return Promise.resolve(
-      Array.from({ length: PANES }, (_, i) => ({
-        id: `r${i + 1}`,
-        base: i === 0 ? "" : `/rt/r${i + 1}`,
-        root: "~/projects/DeepSeek-Reasonix",
-        name: "DeepSeek-Reasonix",
-        sessionPath: `/sessions/pane-${i + 1}.jsonl`,
-      })),
-    );
   }
 
   async moveSessionTo(path: string, target: string) {
@@ -572,16 +528,11 @@ class BenchHub extends MockHub {
       return new Promise((resolve) => setTimeout(() => resolve(answer), archived ? slow : 0));
     }
     const wait = TREE_AT - performance.now();
-    if (wait > 0) return new Promise((resolve) => setTimeout(() => resolve(this.tree()), wait));
+    if (wait > 0) return new Promise((resolve) => setTimeout(() => resolve(this.tree(window)), wait));
     if (query.get("tree") === "none") return Promise.resolve([]);
-    if (!WORKSPACES && query.has("trustpending") && PANES > 1) {
-      return super.tree().then((all) => all.map((ws, i) => i > 0 ? ws : { ...ws, sessions: Array.from({ length: PANES }, (_, k) => ({
-        path: `/sessions/pane-${k + 1}.jsonl`, name: `pane-${k + 1}`, title: `并行会话 ${k + 1}`, turns: 3, runtimeId: `r${k + 1}`,
-      })) }));
-    }
-    if (!WORKSPACES) return super.tree();
-    return Promise.resolve(
-      Array.from({ length: WORKSPACES }, (_, w) => ({
+    if (!WORKSPACES) return super.tree(window);
+    return super.runtimes().then((runtimes) =>
+      this.recentTree(Array.from({ length: WORKSPACES }, (_, w) => ({
         root: `~/projects/workspace-${w}`,
         name: `workspace-${w}`,
         remembered: true,
@@ -591,12 +542,13 @@ class BenchHub extends MockHub {
           name: `w${w}-s${s}`,
           title: query.has("rows") ? ROW_TITLES[s % ROW_TITLES.length] : `第 ${s} 次会话，标题是内核起的一句话`,
           turns: (s % 40) + 1,
+          runtimeId: runtimes.find((runtime) => runtime.sessionPath === `/sessions/w${w}-s${s}.jsonl`)?.id,
           ...(query.has("rows") ? {
             lastActiveAt: Date.now() - (9 + s) * 86_400_000,
             versions: s % 2 === 1 ? [{ path: `/sessions/w${w}-s${s}-v1.jsonl`, name: `w${w}-s${s}-v1`, title: ROW_TITLES[s % ROW_TITLES.length], turns: 1 }] : undefined,
           } : {}),
         }))),
-      })),
+      })), window),
     );
   }
 }
@@ -622,7 +574,7 @@ declare global {
     __panes: () => number;
     // Answer every completion request with this one, as the kernel would for a command typed in full.
     __complete: (answer: import("../src/port/port").Completion) => void;
-    __previewFiles: (files: Record<string, { kind: PreviewInfo["kind"]; text: string }>) => void;
+    __previewFiles: (files: Record<string, { kind: PreviewInfo["kind"]; text?: string; base64?: string }>) => void;
     // Sub-agent runs the kernel would list, each with the conversation it would return.
     __subagents: (runs: { run: SubagentRun; messages: HistoryMessage[] }[]) => void;
     // What folding a stored transcript into cards costs on its own, with no
@@ -643,13 +595,15 @@ window.__toast = pushToast;
 window.__syntax = { apply: applyPack, mount: mountEditor };
 window.__feed = (ev) => hub.feeds.forEach((p) => p.feed(ev));
 window.__panes = () => hub.feeds.size;
+const fixtureBytes = (f: { text?: string; base64?: string }) =>
+  f.base64 !== undefined ? Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0)) : new TextEncoder().encode(f.text ?? "");
 window.__previewFiles = (files) => hub.feeds.forEach((port) => {
   port.workspacePreviewInfo = async (ref) => ({
-    ref, kind: files[ref.path].kind, size: new TextEncoder().encode(files[ref.path].text).length,
+    ref, kind: files[ref.path].kind, size: fixtureBytes(files[ref.path]).length,
     version: "fixture", limit: 32 << 20, readOnly: false,
   });
   port.workspacePreviewContent = async (ref) => ({
-    data: new TextEncoder().encode(files[ref.path].text).buffer, version: "fixture",
+    data: fixtureBytes(files[ref.path]).buffer, version: "fixture",
   });
 });
 window.__subagents = (runs) => hub.feeds.forEach((port) => {
@@ -685,7 +639,7 @@ function settingCardFrame(kind: string): WireEvent {
     return { kind: "notice", level: "info", code: "setting_open", text: "助手需要改动 permissions.mode，只有你本人能改。", detail: "permissions.mode" } as WireEvent;
   }
   const elevated = kind === "elevated";
-  const id = elevated ? "peers.dispatch" : "ui.show_receipt";
+  const id = elevated ? "peers.dispatch" : "ui.show_changed_files";
   return {
     kind: "approval_request",
     approval: {

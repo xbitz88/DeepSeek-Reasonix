@@ -33,6 +33,9 @@ import (
 // run/serve pass true so a missing key fails fast, chat/desktop false so the UI
 // is reachable before one is set.
 type Options struct {
+	// SummarizeFolds keeps the model-written digest for a fold. Without it a
+	// fold moves the earlier conversation into a file the model reads back.
+	SummarizeFolds   bool
 	AgentComposition string
 	Composition      *agentcomposition.Binding
 	ComputerDriver   *computer.Driver
@@ -66,6 +69,9 @@ type Options struct {
 	// Interactive terminals must pass a private writer (or io.Discard) so
 	// background output cannot corrupt the TUI's raw mode.
 	Stderr io.Writer
+	// DiagnosticSink receives skill discovery warnings as renderer-managed notices.
+	// Nil preserves the noninteractive stderr destination.
+	DiagnosticSink event.Sink
 	// OnPhase receives completed assembly timings synchronously, including on a later failure.
 	OnPhase func(Phase)
 	// Project root for config, skills, memory, commands, hooks, and tool
@@ -139,7 +145,6 @@ type Options struct {
 	Observe *ObserveOptions
 
 	GoalTurnsUnreachable bool // this assembly never arms a Goal turn; see GoalOnlyToolNames
-	HoldOwedChecks       bool // the caller asked for a verified result, so a changed turn owes its check whatever host_verification says
 	UnattendedChild      bool // an unattended child run: it offers neither best_of_n nor isolation
 	// SessionRecoveryMeta and OnSessionRecovered let richer frontends attach
 	// local UI metadata to automatic transcript recovery branches.

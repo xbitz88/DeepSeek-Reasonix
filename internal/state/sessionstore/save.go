@@ -99,6 +99,7 @@ type sessionPersistState struct {
 	// and heal a stale ledger.
 	saveVerified bool
 	ok           bool
+	disk         persistedDisk
 }
 
 type sessionSaveMode int
@@ -202,10 +203,20 @@ func (s *Session) withSessionSaveLocks(path string, fn func() error) error {
 }
 
 func sessionArtifactExists(path string) bool {
+	return sessionArtifactExistsExcept(path)
+}
+
+// sessionArtifactExistsExcept is sessionArtifactExists without the named
+// sidecars: an index is rebuilt from the transcript, so with no transcript
+// beside it, it says nothing about whether the conversation exists.
+func sessionArtifactExistsExcept(path string, ignore ...string) bool {
 	if _, err := os.Lstat(path); err == nil {
 		return true
 	}
 	for _, artifact := range store.SessionSidecarFiles(path) {
+		if slices.Contains(ignore, artifact) {
+			continue
+		}
 		// A legacy v0 event transcript can share the native
 		// `<id>.events.jsonl` name with the destination being imported. It is
 		// intentionally left in place, and must not make SaveIfAbsent believe
@@ -262,7 +273,7 @@ func (s *Session) saveLocked(path string, mode sessionSaveMode) error {
 	// stalest capture written last would then read the newer transcript it
 	// lost the race to as a bogus stale-prefix conflict.
 	msgs, version, rewriteVersion := s.SnapshotWithVersion()
-	digest, contentBytes, err := digestAndSizeSessionMessages(msgs)
+	digest, contentBytes, prefixDigest, err := digestSizeAndPrefix(context.Background(), msgs, s.diskPrefixLen(path))
 	if err != nil {
 		return err
 	}
@@ -282,7 +293,7 @@ func (s *Session) saveLocked(path string, mode sessionSaveMode) error {
 	}
 	repairLog := false
 	ownedRewrite := mode == sessionSaveRewrite || mode == sessionSaveRewriteCompact
-	decision, err := s.checkSnapshotWrite(path, msgs, digest, version, ownedRewrite)
+	decision, err := s.snapshotDecision(path, msgs, digest, prefixDigest, version, ownedRewrite)
 	if err != nil {
 		return err
 	}
@@ -1109,28 +1120,8 @@ func digestAndSizeSessionMessages(msgs []provider.Message) ([sha256.Size]byte, i
 }
 
 func digestAndSizeSessionMessagesContext(ctx context.Context, msgs []provider.Message) ([sha256.Size]byte, int64, error) {
-	h := sha256.New()
-	size := int64(0)
-	for _, m := range msgs {
-		if err := ctx.Err(); err != nil {
-			return [sha256.Size]byte{}, 0, err
-		}
-		m = messageForSessionIdentity(m)
-		b, err := json.Marshal(m)
-		if err != nil {
-			return [sha256.Size]byte{}, 0, err
-		}
-		if _, err := h.Write(b); err != nil {
-			return [sha256.Size]byte{}, 0, err
-		}
-		if _, err := h.Write([]byte{'\n'}); err != nil {
-			return [sha256.Size]byte{}, 0, err
-		}
-		size += int64(len(b)) + 1
-	}
-	var out [sha256.Size]byte
-	copy(out[:], h.Sum(nil))
-	return out, size, nil
+	digest, size, _, err := digestSizeAndPrefix(ctx, msgs, -1)
+	return digest, size, err
 }
 
 func messagesHavePrefix(full, prefix []provider.Message) bool {
@@ -1448,7 +1439,11 @@ func loadSessionUnlockedContext(ctx context.Context, path string) (*Session, err
 			if ok {
 				revision = meta.Revision
 			}
-			s.markPersistedFromLoad(path, digest, s.version, revision, s.rewriteVersion)
+			if loadAgreesWithLedger(s, ok, meta, digest) {
+				s.markPersisted(path, digest, s.version, revision, s.rewriteVersion)
+			} else {
+				s.markPersistedFromLoad(path, digest, s.version, revision, s.rewriteVersion)
+			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -1507,6 +1502,9 @@ func ClearCleanupPending(sessionPath string) error {
 	if path == "" {
 		return nil
 	}
+	if err := preserveV4Removal(sessionPath); err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -1526,7 +1524,7 @@ func IsCleanupPending(sessionPath string) bool {
 // IsVisibleSession reports whether a persisted session should appear on normal
 // user/agent-facing list, restore, and retrieval surfaces.
 func IsVisibleSession(sessionPath string) bool {
-	return strings.TrimSpace(sessionPath) != "" && !IsCleanupPending(sessionPath)
+	return strings.TrimSpace(sessionPath) != "" && !IsCleanupPending(sessionPath) && !isV4SessionRemoved(sessionPath)
 }
 
 // ListCleanupPending returns delayed-cleanup markers left in dir. A missing

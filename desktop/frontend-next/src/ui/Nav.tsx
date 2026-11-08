@@ -10,11 +10,11 @@ const CHAT = "M3.2 4.4a1.2 1.2 0 0 1 1.2-1.2h7.2a1.2 1.2 0 0 1 1.2 1.2v5a1.2 1.2
 
 // Every entry goes somewhere that exists. A rail of icons that open nothing is
 // the cheapest thing to draw and the most expensive thing to keep.
-const HOME: [Mark, string, string | null] = ["chat", "会话", null];
+const HOME: [Mark, string, string | null] = ["chat", "common.session", null];
 
-const FOOT: [Mark, string, string, string][] = [
-  ["account", "账号", "account", "chrome.account"],
-  ["advanced", "设置", "", "chrome.settings"],
+const FOOT: [Mark, string, string, string?][] = [
+  ["account", "settings.account", "account"],
+  ["advanced", "common.settings", "", "chrome.settings"],
 ];
 
 interface Props {
@@ -35,14 +35,16 @@ interface Props {
 
 export function Nav({ at, onGo, onFiles, onHome, onRail, onFeedback, onNew, feedbackUnread, shown }: Props) {
   const destinations = useDestinations();
-  const btn = ([key, label, sec, action]: [Mark, string, string | null, string?]) => (
+  const btn = ([key, label, sec, action]: [Mark, string, string | null, string?]) => {
+    const account = key === "account";
+    return (
     <button
       key={key}
       className="navbtn"
-      data-action={action}
+      data-action={account ? "chrome.account" : action}
       aria-label={t(label)}
       aria-current={(sec ?? null) === at ? "page" : undefined}
-      onClick={() => (key === "files" ? onFiles() : sec === null ? (at === null ? onRail() : onHome()) : onGo(sec || undefined))}
+      onClick={() => (key === "files" ? onFiles() : sec === null ? (at === null ? onRail() : onHome()) : onGo(key === "ext" ? "extensions" : key === "usage" ? "spend" : sec || undefined))}
     >
       {key === "files" ? <StudioIcon name="file" aria-hidden="true" /> : <svg viewBox="0 0 16 16" aria-hidden="true">
         {key === "chat" ? <path d={CHAT} /> : ICON[key]}
@@ -50,20 +52,21 @@ export function Nav({ at, onGo, onFiles, onHome, onRail, onFeedback, onNew, feed
       {key === "advanced" && <UpdateDot />}
       <span className="navhint" role="tooltip">{t(label)}</span>
     </button>
-  );
+    );
+  };
   return (
-    <nav className="nav" aria-label={t("主导航")} aria-hidden={shown ? undefined : true} inert={!shown}>
+    <nav className="nav" aria-label={t("settings.main_navigation")} aria-hidden={shown ? undefined : true} inert={!shown}>
       <div className="navgrp">
-        <button className="navbtn" data-action="session.new" aria-label={t("新建会话")} onClick={onNew}>
+        <button className="navbtn" data-action="session.new" aria-label={t("common.start_a_new_session")} onClick={onNew}>
           <StudioIcon name="plus" aria-hidden="true" />
-          <span className="navhint" role="tooltip">{t("新建会话")}</span>
+          <span className="navhint" role="tooltip">{t("common.start_a_new_session")}</span>
         </button>
         {[HOME, ...destinations].map(btn)}
       </div>
       <div className="navgrp foot">
         <button className="navbtn" data-action="feedback.open" onClick={onFeedback}>
           <StudioIcon name="feedback" aria-hidden="true" />
-          <span className="navhint" role="tooltip">{t("发送反馈")}</span>
+          <span className="navhint" role="tooltip">{t("common.send_feedback")}</span>
           <FeedbackBadge unread={feedbackUnread} />
         </button>
         {FOOT.map(btn)}

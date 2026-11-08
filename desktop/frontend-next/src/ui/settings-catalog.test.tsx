@@ -32,7 +32,7 @@ const name = (el: Node): string => {
   return n?.type === "JSXIdentifier" ? (n.name as string) : "";
 };
 
-/** Every settings block the tree renders, by the id it names itself with.
+/** Every settings block or row the tree renders, by the id it names itself with.
  *  A hand-drawn frame counts when its direct group header carries an h3 — the
  *  same structure Group renders, unlike nested labels such as Storage's. */
 function rendered(): { ids: string[]; unnamed: string[] } {
@@ -44,6 +44,11 @@ function rendered(): { ids: string[]; unnamed: string[] } {
         const id = literal(attr(n, "id"));
         if (id) ids.push(id);
         else unnamed.push(`${path}:${n.loc?.start.line}  <Group> with no literal id`);
+        return;
+      }
+      if (n.type === "JSXOpeningElement" && (name(n) === "SettingRow" || name(n) === "SettingDeep")) {
+        const id = literal(attr(n, "id"));
+        if (id) ids.push(id);
         return;
       }
       if (n.type !== "JSXElement") return;
@@ -120,11 +125,11 @@ describe("the settings catalogue", () => {
     const bySection = new Map<string, Set<SettingScope>>();
     for (const e of SETTINGS) bySection.set(e.section, (bySection.get(e.section) ?? new Set()).add(e.scope));
     // Session controls and persisted machine preferences share a page.
-    expect(bySection.get("session")?.size, "the session page's scopes collapsed to one — was scope derived from the section?")
+    expect(bySection.get("ext")?.size, "the extensions page's scopes collapsed to one — was scope derived from the section?")
       .toBeGreaterThan(1);
-    // And two pages that look alike disagree: preset is not persisted at all,
-    // approval is persisted machine-wide, and they render identically.
-    expect(SETTING_AT("preset")?.scope).toBe("session");
+    // And two pages that look alike disagree: where a session writes is kept
+    // per workspace, approval is persisted machine-wide, and they render identically.
+    expect(SETTING_AT("session-dir")?.scope).toBe("workspace");
     expect(SETTING_AT("approval")?.scope).toBe("machine");
   });
 
@@ -143,18 +148,17 @@ describe("the settings catalogue", () => {
   // wording, the handler or the component: change the declaration and the row
   // changes, change anything else and it does not.
   it("reads what a change costs from the declaration and nowhere else", () => {
-    const now = renderToStaticMarkup(<Group id="preset" title="X" />);
+    const now = renderToStaticMarkup(<Group id="market" title="X" />);
     const later = renderToStaticMarkup(<Group id="storage" title="X" />);
     expect(now).toContain("立即生效");
-    expect(later).toContain("已保存 · 重启后生效");
+    expect(later).toContain("重启后生效");
     expect(now).not.toContain("重启");
   });
 
-  // Saved and in force are two facts, and the restart answer is the one where
-  // they come apart. A row that only said "after a restart" would leave the
-  // reader wondering whether closing this sheet loses what they just typed.
-  it("says a restart setting is already kept", () => {
-    expect(renderToStaticMarkup(<Group id="storage" title="X" />)).toContain("已保存");
+  // A block that differs from the page's usual says so once, as a tag beside
+  // its name, instead of repeating it under every row.
+  it("tags a restart setting beside its name", () => {
+    expect(renderToStaticMarkup(<Group id="storage" title="X" />)).toMatch(/class="scope-tag">[^<]*重启后生效/);
   });
 
   // Reporting blocks have nothing to apply, and must not claim otherwise.

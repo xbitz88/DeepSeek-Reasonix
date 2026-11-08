@@ -130,6 +130,39 @@ write roots.
 - Resuming an already-open session with a different set is refused
   (`acp.additional_directories.session_open`); close it first.
 
+### When a session is already open elsewhere
+
+`session/new`, `session/load` and `session/resume` take the transcript's lease
+for the session's lifetime. A lease refusal answers with an implementation-defined
+JSON-RPC code and a `data.code` a client branches on; `message` stays Reasonix's
+English, which clients still show.
+
+```json
+{"error": {"code": -32022, "message": "session/load: this session is already open elsewhere in this Reasonix (since 09:14); close the other Reasonix window or process first", "data": {"code": "busy.session_in_use"}}}
+```
+
+- `-32022` is "another runtime owns this session" and `-32023` is "ownership
+  could not be proven". They are different answers: the first names a holder a
+  person can close, the second names missing evidence, and reporting it as held
+  would blame a window that may not exist.
+- `-32600` is not a lease refusal. A malformed request gets that code before any
+  session method runs, and a lease refusal never uses it.
+- `-32603` means the lease could not be taken for a reason the store cannot
+  classify, such as a metadata write that failed.
+
+| `data.code` | JSON-RPC | Refusal | What the client does |
+| --- | --- | --- | --- |
+| `busy.session_in_use` | `-32022` | Another runtime owns this session's transcript lease. | Do not bind it elsewhere or retry blindly. Ask the person to close the other Reasonix window or process, then retry once that holder exits. The transcript is intact and nothing already written is lost. |
+| `session.lease_unprovable` | `-32023` | The lease probe could not prove ownership either way: the lock or the lease metadata could not be read. | Treat it as neither held nor free, and do not tell the person a window holds it. Ask them to check the session directory's `.lease.lock` and `.lease.json` entries, then retry once the probe can decide. |
+
+`busy.session_in_use` is the HTTP frontend's identity for the same conflict, so one
+vocabulary names it on both surfaces. `session.lease_unprovable` has no HTTP answer
+because no HTTP path asks the three-state probe.
+
+ACP has no read-only attach: `session/load` and `session/resume` bind the transcript
+for writing, so a client that cannot close the other holder reports the refusal
+instead of loading.
+
 ## Session controls
 
 Reasonix exposes independent controls instead of combining unrelated choices in
@@ -374,6 +407,51 @@ names rather than constructing vendor method strings.
 `idempotent`. List responses contain previews and byte counts, never prompt
 bodies. A recovered inbox is paused; clients should let users inspect it before
 calling `setPaused` with `false`.
+
+### When an inbox call is refused
+
+A refused inbox call answers with an implementation-defined JSON-RPC code and a
+`data.code` a client branches on; `message` stays Reasonix's English, which
+clients still show. The identities are the HTTP frontend's, so one vocabulary
+names the queue's conditions on both surfaces.
+
+```json
+{"error": {"code": -32020, "message": "inbox item not found", "data": {"code": "inbox.not_found"}}}
+```
+
+`-32020` is "the queue refused this call" and `-32021` is "the work may already
+have run". The class is the client's instruction:
+
+- **terminal** — the same call cannot start succeeding; repair the client's view
+  instead of retrying it;
+- **retry-after-repair** — the same call succeeds once the named condition is
+  repaired;
+- **do not retry** — the work may already have run, so retrying could run it
+  twice.
+
+| `data.code` | JSON-RPC | Class | Refusal |
+| --- | --- | --- | --- |
+| `inbox.not_found` | `-32020` | terminal | No item with this id is in the queue. Read `list` and drop it. |
+| `inbox.invalid_state` | `-32020` | terminal | This item's state does not allow this verb. Read `list` for the state, then pick a verb that fits. |
+| `inbox.retry_may_repeat` | `-32021` | do not retry | Its block code is not `steer_unapplied`, so the turn may already have run. Retrying could run the work twice. |
+| `inbox.item_too_large` | `-32020` | retry-after-repair | The body is over the single-item limit. Send a shorter one. |
+| `inbox.capacity_items` | `-32020` | retry-after-repair | The queue holds its maximum count. Delete pending work, then retry. |
+| `inbox.capacity_bytes` | `-32020` | retry-after-repair | The queue holds its maximum bytes. Delete pending work, then retry. |
+| `inbox.paused` | `-32020` | retry-after-repair | The queue is paused. Resume it where the pause is one a client may lift; a host-set pause is for the person to inspect first, then retry. |
+| `inbox.unrecovered` | `-32020` | retry-after-repair | The queue could not be read, so its contents are unknown. Inspect the queue directory before resuming. |
+| `inbox.closed` | `-32020` | terminal | This queue is closed. Open the session again. |
+| `inbox.schema_readonly` | `-32020` | terminal | A newer Reasonix wrote the queue and this build may read it only. Upgrade to write it. |
+| `inbox.foreign_run` | `-32020` | terminal | Another run owns this item. Change it from the session that owns it. |
+| `inbox.idempotency_conflict` | `-32020` | terminal | The key already belongs to different input. The same body still refuses; new input needs a new key. |
+| `steer.already_applied` | `-32020` | terminal | The steer reached the turn before this call did. Nothing is lost and nothing is left to do. |
+| `inbox.empty` | `-32602` | terminal | The request carries no text. Send a non-empty body. |
+
+Three answers are not queue refusals:
+
+- `-32602` with no `data.code`: the request cannot address a queue at all — an
+  unknown `sessionId`, or params that do not parse;
+- `-32600`: a malformed JSON-RPC frame (no method, or not an object);
+- `-32603`: the queue, or the session's path to it, failed rather than refused.
 
 ## Goal pause and resume extension
 

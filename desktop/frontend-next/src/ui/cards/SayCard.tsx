@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useThinkingPreview, useStartsOpen } from "../../state/foldpref";
+import { useThinkingPreview, useStartsOpen, useFoldModes } from "../../state/foldpref";
 import { StudioIcon } from "../StudioIcon";
 import { t } from "../../i18n";
 import { count, decimals } from "../../i18n/format";
 import { Sym } from "../Sym";
 import type { Item } from "../../state/session";
 import { thoughtStartedAt } from "../../state/say";
+import { useThoughtFold } from "../thoughtfold";
 import { LazyMarkdown } from "../LazyMarkdown";
 import { Boundary } from "../Boundary";
 import { CopyButton } from "../CopyButton";
@@ -16,6 +17,8 @@ import { useShown } from "../shown";
 import { ReplyMenu } from "./ReplyMenu";
 import { useDismiss } from "../dismiss";
 import { pinToViewport } from "../place";
+import { copySelection, SelectionBar } from "../SelectionBar";
+import { useSelectionBar } from "../useSelectionBar";
 import type { LocalRefs } from "../Markdown";
 
 // Folded, the only thing left of a thought is how much of the turn it was. The
@@ -25,8 +28,10 @@ function ThoughtLabel({ item }: { item: Extract<Item, { t: "say" }> }) {
   // Graphemes, not code units: an emoji in the reasoning is one character to
   // the reader and two to the string.
   const graphemes = useMemo(() => [...(item.reasoning ?? "")].length, [item.reasoning]);
-  const chars = t("{n} 字", { n: count(graphemes) });
-  return <>{item.thoughtMs ? t("思考 {secs} 秒 · {chars}", { secs: decimals(item.thoughtMs / 1000, 1), chars }) : t("思考 {chars}", { chars })}</>;
+  const chars = t("chat.n_chars", { n: count(graphemes) });
+  const secs = decimals((item.thoughtMs ?? 0) / 1000, 1);
+  if (item.cut) return <>{t(item.cut === "stopped" ? "chat.thought_stopped_s" : "chat.thought_failed_s", { secs })}</>;
+  return <>{item.thoughtMs ? t("chat.thought_chars_secs_s", { secs, chars }) : t("chat.thought_chars", { chars })}</>;
 }
 
 const LIVE_TICK_MS = 100;
@@ -43,8 +48,8 @@ function LiveThought({ id }: { id: string }) {
     const h = window.setInterval(() => setNow(Date.now()), LIVE_TICK_MS);
     return () => window.clearInterval(h);
   }, [since, watched]);
-  if (since === undefined) return <>{t("思考中…")}</>;
-  return <>{t("思考中 {secs} 秒", { secs: decimals(Math.max(0, now - since) / 1000, 1) })}</>;
+  if (since === undefined) return <>{t("chat.thinking")}</>;
+  return <>{t("chat.thinking_secs_s", { secs: decimals(Math.max(0, now - since) / 1000, 1) })}</>;
 }
 
 // A ref is "provider/model"; the model is what identifies it to a reader, and
@@ -102,8 +107,23 @@ function download(text: string) {
 
 export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { item: Extract<Item, { t: "say" }>; afterAnswer?: ReactNode; settled?: boolean; reply?: ReplyActions; quiet?: boolean }) {
   const [branching, setBranching] = useState(false);
-  const start = useStartsOpen("thinking", !item.done && !item.text);
-  const [touched, setOpen] = useState<boolean | null>(null);
+  const thinking = !item.done && item.thoughtMs === undefined;
+  const start = useStartsOpen("thinking", thinking && !item.text);
+  const alwaysOpen = useFoldModes().thinking === "open";
+  // The title changes once, when a thought this card watched finishes; a
+  // thought drawn already finished is not that change happening.
+  const watchedThinking = useRef(thinking);
+  const [settledHere, setSettledHere] = useState(false);
+  useEffect(() => {
+    const fell = watchedThinking.current && !thinking;
+    watchedThinking.current = thinking;
+    if (!fell) return;
+    setSettledHere(true);
+    const id = setTimeout(() => setSettledHere(false), 240);
+    return () => clearTimeout(id);
+  }, [thinking]);
+  const folds = useThoughtFold();
+  const [touched, setOpen] = useState<boolean | null>(() => folds.get(item.id) ?? null);
   const open = touched ?? start;
   const peeks = useThinkingPreview() && !open;
   const peek = peeks ? item.reasoning?.trimStart() : "";
@@ -119,6 +139,7 @@ export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { i
     setSelection(null);
   }, []);
   useDismiss(!!selection, selectionMenu, closeSelection);
+  const bar = useSelectionBar(answer, selectedIn);
   const offerSelection = (x: number, y: number) => {
     if (!item.done || !reply) return false;
     const text = selectedIn(answer.current);
@@ -129,6 +150,7 @@ export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { i
       y = rect.bottom;
     }
     setMenu("");
+    bar.clear();
     setSelection({ text, x, y });
     return true;
   };
@@ -150,20 +172,41 @@ export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { i
         </div>
         <div className="out">
           {item.reasoning?.trim() && (
-            <details className="think" open={open} onToggle={(e) => e.currentTarget.open !== open && setOpen(e.currentTarget.open)}>
+            <details className="think" open={open} data-live={thinking ? "" : undefined} data-full={alwaysOpen ? "" : undefined} data-cut={item.cut}
+              data-settled={settledHere ? "" : undefined} onToggle={(e) => {
+                const next = e.currentTarget.open;
+                if (next === open) return;
+                setOpen(next);
+                folds.set(item.id, next);
+              }}>
               <summary>
-                <span className="fold">{item.done || item.thoughtMs !== undefined ? <ThoughtLabel item={item} /> : <LiveThought id={item.id} />}</span>
-                {peek && <span className="thinking-preview">{peek}</span>}
+                <span className="fold">
+                  <span className="think-swap">
+                    {settledHere && (
+                      <span className="think-label think-out" aria-hidden="true">
+                        {t("chat.thinking_secs_s", { secs: decimals((item.thoughtMs ?? 0) / 1000, 1) })}
+                      </span>
+                    )}
+                    <span className={thinking ? "think-label think-sweep" : "think-label"} key={thinking ? "live" : "done"}>
+                      {thinking ? <LiveThought id={item.id} /> : <ThoughtLabel item={item} />}
+                    </span>
+                  </span>
+                </span>
+                {item.cut && !open && <span className="think-note">{t(item.cut === "stopped" ? "chat.thought_stopped_note" : "chat.thought_failed_note")}</span>}
+                {peek && !item.cut && <span className="thinking-preview">{peek}</span>}
               </summary>
               <div className="tk">
-                {thought}
-                {!item.done && <span className="caret" />}
+                <div className="tk-in">
+                  {thought}
+                  {thinking && <span className="caret" />}
+                </div>
               </div>
             </details>
           )}
           {item.text && (
             <div className="txt" ref={answer} tabIndex={item.done && reply ? 0 : undefined}
-              data-action-contextmenu="reply.selection.menu" data-action-keydown="reply.selection.menu" data-target={item.id}
+              data-action-contextmenu="reply.selection.menu" data-action-keydown="reply.selection.menu" data-action-mouseup="reply.selection.bar" data-target={item.id}
+              onMouseUp={() => { if (item.done && reply) bar.settle(); }}
               onContextMenu={(e) => {
                 if (!offerSelection(e.clientX, e.clientY)) return;
                 e.preventDefault();
@@ -175,7 +218,7 @@ export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { i
                 e.preventDefault();
                 e.stopPropagation();
               }}>
-              <Boundary retryKey={item.text} fallback={<div className="md" style={{ whiteSpace: "pre-wrap" }}>{item.text}</div>}>
+              <Boundary retryKey={item.text} fallback={<div className="srcfb"><div className="srcfb-hd"><span className="srcfb-tag">{t("chat.shown_as_written")}</span><span>{t("chat.this_layout_did_not_show")}</span></div><div className="md srcfb-src">{item.text}</div></div>}>
                 <LazyMarkdown text={item.text} streaming={!item.done} local={reply?.files} />
               </Boundary>
             </div>
@@ -188,32 +231,32 @@ export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { i
             <div className="acts">
               <CopyButton text={item.text} iconOnly />
               {reply && (
-                <TooltipButton type="button" data-action="reply.quote" data-target={item.id} title={t("引用到输入框")} aria-label={t("引用到输入框")} onClick={() => reply.onQuote(selectedIn(answer.current) || item.text, item.id)}>
+                <TooltipButton type="button" data-action="reply.quote" data-target={item.id} title={t("chat.quote_into_the_composer")} aria-label={t("chat.quote_into_the_composer")} onClick={() => reply.onQuote(selectedIn(answer.current) || item.text, item.id)}>
                   <StudioIcon name="quote" />
                 </TooltipButton>
               )}
               {reply?.canBranch(item.id) && (
-                <TooltipButton type="button" data-action="reply.branch" title={t("创建对话分支")} aria-label={t("创建对话分支")} disabled={branching} onClick={() => { setBranching(true); void Promise.resolve(reply.onBranch(item.id)).finally(() => setBranching(false)); }}>
+                <TooltipButton type="button" data-action="reply.branch" title={t("chat.create_a_conversation_branch")} aria-label={t("chat.create_a_conversation_branch")} disabled={branching} onClick={() => { setBranching(true); void Promise.resolve(reply.onBranch(item.id)).finally(() => setBranching(false)); }}>
                   <StudioIcon name={branching ? "clock" : "fork"} />
                 </TooltipButton>
               )}
               {reply?.canRegenerate(item.id) && (
                 <span className="acts-menu">
-                  <TooltipButton ref={retry} type="button" data-action="reply.retry" title={t("重新生成")} aria-label={t("重新生成")} aria-expanded={menu === "retry"} onClick={() => setMenu((m) => (m === "retry" ? "" : "retry"))}>
+                  <TooltipButton ref={retry} type="button" data-action="reply.retry" title={t("chat.regenerate")} aria-label={t("chat.regenerate")} aria-expanded={menu === "retry"} onClick={() => setMenu((m) => (m === "retry" ? "" : "retry"))}>
                     <StudioIcon name="refresh" />
                   </TooltipButton>
                   <ReplyMenu anchor={retry} open={menu === "retry"} onClose={shut}>
                     <div className="acts-pop-head">
-                      {t("重新生成")}
-                      <small>{t("当前回复会留在运行历史里")}</small>
-                      {reply.hasLaterTurns(item.id) && <small>{t("这一轮之后的记录会被丢弃")}</small>}
+                      {t("chat.regenerate")}
+                      <small>{t("chat.the_current_reply_stays_in")}</small>
+                      {reply.hasLaterTurns(item.id) && <small>{t("chat.everything_after_this_turn_is")}</small>}
                     </div>
                     <button type="button" role="menuitem" data-action="reply.retry-now" onClick={() => { setMenu(""); reply.onRegenerate(item.id); }}>
-                      <StudioIcon name="refresh" /><span>{t("按当前配置重试")}</span>{reply.model && <small>{reply.model}</small>}
+                      <StudioIcon name="refresh" /><span>{t("chat.retry_as_configured")}</span>{reply.model && <small>{reply.model}</small>}
                     </button>
                     {reply.onConfigureModel && (
                       <button type="button" role="menuitem" data-action="reply.configure" onClick={() => { setMenu(""); reply.onConfigureModel?.(); }}>
-                        <StudioIcon name="sliders" /><span>{t("先调整模型与强度")}</span>
+                        <StudioIcon name="sliders" /><span>{t("chat.adjust_the_model_and_effort")}</span>
                       </button>
                     )}
                   </ReplyMenu>
@@ -221,19 +264,19 @@ export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { i
               )}
               {reply && (
                 <span className="acts-menu">
-                  <TooltipButton ref={more} type="button" data-action="reply.more" title={t("更多")} aria-label={t("更多")} aria-expanded={menu === "more"} onClick={() => setMenu((m) => (m === "more" ? "" : "more"))}>
+                  <TooltipButton ref={more} type="button" data-action="reply.more" title={t("common.more")} aria-label={t("common.more")} aria-expanded={menu === "more"} onClick={() => setMenu((m) => (m === "more" ? "" : "more"))}>
                     <StudioIcon name="more" />
                   </TooltipButton>
                   <ReplyMenu anchor={more} open={menu === "more"} onClose={shut}>
-                    <div className="acts-pop-head">{t("这条回复")}</div>
+                    <div className="acts-pop-head">{t("chat.this_reply")}</div>
                     <button type="button" role="menuitem" data-action="reply.download" onClick={() => { setMenu(""); download(item.text); }}>
-                      <StudioIcon name="download" /><span>{t("下载回复")}</span><small>Markdown</small>
+                      <StudioIcon name="download" /><span>{t("chat.download_the_reply")}</span><small>Markdown</small>
                     </button>
                     {reply.onRunDetail && (
                       <>
-                        <div className="acts-pop-head">{t("本轮执行")}</div>
+                        <div className="acts-pop-head">{t("chat.this_turn")}</div>
                         <button type="button" role="menuitem" data-action="reply.run-detail" onClick={() => { setMenu(""); reply.onRunDetail?.(); }}>
-                          <StudioIcon name="activity" /><span>{t("运行分析")}</span>
+                          <StudioIcon name="activity" /><span>{t("common.run_analysis")}</span>
                         </button>
                       </>
                     )}
@@ -244,8 +287,20 @@ export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { i
           )}
         </div>
       </div>
+      {bar.at && reply && !selection && (
+        <SelectionBar at={bar.at}>
+          <button type="button" data-action-click="reply.quote" data-action-mousedown="reply.quote" data-target={item.id}
+            onMouseDown={(e) => e.preventDefault()} onClick={() => { reply.onQuote(bar.at!.text, item.id); bar.clear(); }}>
+            <StudioIcon name="quote" /><span>{t("common.quote_selected_text")}</span>
+          </button>
+          <button type="button" data-action-click="reply.selection.copy" data-action-mousedown="reply.selection.copy" data-target={item.id}
+            onMouseDown={(e) => e.preventDefault()} onClick={() => { copySelection(bar.at!.text); bar.clear(); }}>
+            <StudioIcon name="copy" /><span>{t("chat.copy_selected_text")}</span>
+          </button>
+        </SelectionBar>
+      )}
       {selection && reply && createPortal(
-        <div className="acts-pop" role="menu" aria-label={t("选中内容")} data-action-keydown="reply.selection.menu" data-target={item.id} ref={(el) => {
+        <div className="acts-pop" role="menu" aria-label={t("chat.selected_text")} data-action-keydown="reply.selection.menu" data-target={item.id} ref={(el) => {
           selectionMenu.current = el;
           if (el) pinToViewport(el, selection.x, selection.y);
         }}
@@ -261,8 +316,8 @@ export function SayCard({ item, afterAnswer, settled = true, reply, quiet }: { i
           <button type="button" role="menuitem" autoFocus data-action="reply.quote" data-target={item.id} onClick={() => {
             setSelection(null);
             reply.onQuote(selection.text, item.id);
-          }}><span>{t("引用选中内容")}</span></button>
-          <CopyButton text={selection.text} role="menuitem" label={t("复制选中内容")} />
+          }}><span>{t("common.quote_selected_text")}</span></button>
+          <CopyButton text={selection.text} role="menuitem" label={t("chat.copy_selected_text")} />
         </div>, document.body,
       )}
     </div>

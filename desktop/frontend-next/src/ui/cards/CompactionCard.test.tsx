@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CompactionCard } from "./CompactionCard";
 import type { Compaction } from "../../port/wire";
 import { FOLD_WHY, NO_CODE_WHY } from "../../i18n/compaction_why";
-import { EN } from "../../i18n/en";
+import { EN as LEGACY } from "../../i18n/en";
+import { catalogue } from "../../i18n/msg";
+
+const EN: Record<string, string> = { ...LEGACY, ...catalogue("en") };
 
 const draw = (c: Compaction) => renderToStaticMarkup(<CompactionCard c={c} done />);
 
@@ -12,12 +15,6 @@ const draw = (c: Compaction) => renderToStaticMarkup(<CompactionCard c={c} done 
 // supplies the only one available: that the host folds whenever it feels like
 // it. The host knows which bound fired and how big it is — this is where it says so.
 describe("what the card says sent a fold", () => {
-  it("names the fixed bound when that is the one that fired", () => {
-    const html = draw({ trigger: "auto", boundary: "economic", triggerTokens: 160_000, messages: 40 });
-    expect(html).toContain("固定维护线");
-    expect(html).toContain("160k");
-  });
-
   it("names the window's own bound when that one fired instead", () => {
     const html = draw({ trigger: "auto", boundary: "capacity", triggerTokens: 108_800, messages: 40 });
     expect(html).toContain("窗口容量线");
@@ -35,7 +32,7 @@ describe("what the card says sent a fold", () => {
 
   // A fold the user asked for needs no threshold at all: they are the reason.
   it("says nothing about thresholds for a fold the user asked for", () => {
-    const html = draw({ trigger: "manual", boundary: "economic", triggerTokens: 160_000, messages: 40 });
+    const html = draw({ trigger: "manual", boundary: "capacity", triggerTokens: 160_000, messages: 40 });
     expect(html).toContain("手动触发");
     expect(html).not.toContain("160k");
   });
@@ -43,9 +40,9 @@ describe("what the card says sent a fold", () => {
 
 describe("what the card says when a fold installed nothing", () => {
   it("names the cause the host settled", () => {
-    const html = draw({ trigger: "auto", code: "digest_lost_every_change" });
+    const html = draw({ trigger: "auto", code: "fixed_prefix_above_trigger" });
     expect(html).toContain("压缩未完成");
-    expect(html).toContain("摘要没有记下");
+    expect(html).toContain("无法折叠的固定部分");
     expect(html).not.toContain("压缩完成");
   });
 
@@ -109,5 +106,16 @@ describe("what a fold leaves behind", () => {
   it("names the running turn as untouchable", () => {
     const html = renderToStaticMarkup(<CompactionCard c={{ ...folded, remains: { ...remains, active: 12_000 } }} done />);
     expect(html).toContain("折叠动不了它");
+  });
+});
+
+describe("the lighter card the board draws", () => {
+  it("is titled by what it did, tagged auto or manual, and carries no frame of its own", () => {
+    const html = draw({ trigger: "auto", boundary: "capacity", triggerTokens: 108_800, messages: 40, sourceTokens: 117_000, projectionTokens: 24_000 });
+    expect(html).toContain("较早的内容已归档");
+    expect(html).toContain("· 自动");
+    expect(html).toContain('data-light=""');
+    expect(html).not.toContain("comp-bar");
+    expect(draw({ trigger: "manual", messages: 4 })).toContain("· 手动");
   });
 });

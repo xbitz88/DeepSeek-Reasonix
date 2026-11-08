@@ -13,14 +13,50 @@ import { draftKey } from "./drafts";
 
 afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); });
 
-it("labels the active model with its alias while keeping the raw reference in details", async () => {
-  const port = new MockPort();
-  vi.spyOn(port, "models").mockResolvedValue([
-    { ref: "relay/vendor/long-v1", provider: "relay", model: "vendor/long-v1", modelAlias: "Short" },
-  ]);
-  draw({ port, st: status({ modelRef: "relay/vendor/long-v1" }) });
-  const trigger = await screen.findByRole("button", { name: /Short/ });
-  expect(trigger.title).toBe("relay/vendor/long-v1");
+describe("composer model tooltip", () => {
+  const models: ModelEntry[] = [
+    { ref: "relay/vendor/long-v1", provider: "relay", model: "vendor/long-v1", vendor: "relay.example", displayName: " My relay ", modelAlias: " Short " },
+    { ref: "other/plain-v2", provider: "other", model: "plain-v2", displayName: "Other account" },
+  ];
+
+  it("shows account and model aliases without replacing the selection reference", async () => {
+    const port = new MockPort();
+    vi.spyOn(port, "models").mockResolvedValue(models);
+    const pending = deferred<void>();
+    const pick = vi.spyOn(port, "setModel").mockReturnValue(pending.promise);
+    draw({ port, st: status({ modelRef: models[0].ref }), running: true });
+    const trigger = await screen.findByRole("button", { name: /Short/ });
+    await userEvent.setup().hover(trigger);
+    expect(trigger.title).toBe("My relay / Short");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: /plain-v2/ }));
+    await waitFor(() => expect(pick).toHaveBeenCalledWith("other/plain-v2"));
+    expect(trigger.title).toBe("My relay / Short");
+    expect(trigger.hasAttribute("data-pending")).toBe(true);
+    await act(async () => pending.resolve());
+  });
+
+  it("refreshes aliases after settings and follows the active provider and model", async () => {
+    const port = new MockPort();
+    const load = vi.spyOn(port, "models").mockResolvedValue(models);
+    const props = { port, running: false, onSubmit: vi.fn(async () => true), onChanged: vi.fn(), onError: vi.fn() };
+    const view = render(<Composer {...props} status={status({ modelRef: models[0].ref })} />);
+    expect((await screen.findByRole("button", { name: /Short/ })).title).toBe("My relay / Short");
+    load.mockResolvedValue([{ ...models[0], displayName: "Renamed account", modelAlias: "Renamed model" }, models[1]]);
+    view.rerender(<Composer {...props} pulse={1} status={status({ modelRef: models[0].ref })} />);
+    expect((await screen.findByRole("button", { name: /Renamed model/ })).title).toBe("Renamed account / Renamed model");
+    view.rerender(<Composer {...props} pulse={1} status={status({ modelRef: models[1].ref })} />);
+    expect(screen.getByRole("button", { name: /plain-v2/ }).title).toBe("Other account / plain-v2");
+    view.rerender(<Composer {...props} pulse={1} status={status({ modelRef: "missing/vendor/model" })} />);
+    expect(screen.getByRole("button", { name: /^vendor\/model/ }).title).toMatch(/^missing\/vendor\/model/);
+  });
+
+  it("uses canonical provider naming when aliases are blank", async () => {
+    const port = new MockPort();
+    vi.spyOn(port, "models").mockResolvedValue([{ ref: "local/model", provider: "Local account", model: "model", displayName: " ", modelAlias: " " }]);
+    draw({ port, st: status({ modelRef: "local/model" }) });
+    expect((await screen.findByRole("button", { name: /^model/ })).title).toBe("Local account / model");
+  });
 });
 
 // The workspace's git answer, the way /workspace/git words it. Tests that name
@@ -306,26 +342,26 @@ describe("composer drafts", () => {
 });
 
 describe("composer run controls", () => {
-  it.each([false, true])("shows steering only with content during a live turn (pending ask: %s)", async (asking) => {
+  it.each([false, true])("enables steering only with content during a live turn (pending ask: %s)", async (asking) => {
     const port = new MockPort();
     const cancel = vi.spyOn(port, "cancel").mockResolvedValue();
     const onSubmit = vi.fn(async () => true);
     const { box } = draw({ port, running: true, onSubmit,
       st: status({ running: true, decisions: asking ? [{ id: "ask-1", kind: "ask" }] : [] }),
     });
-    expect(screen.queryByRole("button", { name: "插话" })).toBeNull();
+    expect((screen.getByRole("button", { name: "插话" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "停下" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.change(box, { target: { value: "   " } });
-    expect(screen.queryByRole("button", { name: "插话" })).toBeNull();
+    expect((screen.getByRole("button", { name: "插话" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(box, { target: { value: "Check" } });
     expect((screen.getByRole("button", { name: "插话" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByRole("button", { name: "停下" })).toBeTruthy();
     fireEvent.change(box, { target: { value: "" } });
-    expect(screen.queryByRole("button", { name: "插话" })).toBeNull();
+    expect((screen.getByRole("button", { name: "插话" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(box, { target: { value: "先检查日志", selectionStart: 5 } });
     fireEvent.click(screen.getByRole("button", { name: "插话" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("先检查日志"));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "插话" })).toBeNull());
+    await waitFor(() => expect((screen.getByRole("button", { name: "插话" }) as HTMLButtonElement).disabled).toBe(true));
     fireEvent.click(screen.getByRole("button", { name: "停下" }));
     await waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
   });
@@ -368,7 +404,7 @@ describe("composer run controls", () => {
     expect((pending as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(pending);
     expect(cancel).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("button", { name: "插话" })).toBeNull();
+    expect((screen.getByRole("button", { name: "插话" }) as HTMLButtonElement).disabled).toBe(true);
     view.rerender(<Composer {...props} running={false} />);
     await waitFor(() => expect(screen.queryByRole("button", { name: "正在停止…" })).toBeNull());
   });
@@ -446,14 +482,13 @@ describe("composer menus", () => {
       onSubmit: async () => true, onChanged, onError: vi.fn() };
     const view = render(<Composer {...props} />);
     fireEvent.click(view.container.querySelector('button.model-picker')!);
-    await waitFor(() => expect(screen.getAllByRole("menuitem")).toHaveLength(4));
+    await waitFor(() => expect(screen.getAllByRole("menuitem").filter((el) => !el.closest(".menu-aside"))).toHaveLength(4));
     expect(screen.getAllByRole("menuitem")[0].getAttribute("data-value")).toBe("beta/third");
     expect(screen.getAllByRole("menuitem")[0].hasAttribute("data-on")).toBe(true);
     fireEvent.click(screen.getAllByRole("menuitem").find((el) => el.getAttribute("data-value") === "alpha/second")!);
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
     expect(setModel).toHaveBeenCalledExactlyOnceWith("alpha/second");
     view.rerender(<Composer {...props} status={status({ modelRef: "alpha/second" })} />);
-    fireEvent.click(view.container.querySelector('button.model-picker')!);
     expect(screen.getAllByRole("menuitem")[0].getAttribute("data-value")).toBe("alpha/second");
     expect(screen.getAllByRole("menuitem")[0].hasAttribute("data-on")).toBe(true);
     expect(screen.getAllByRole("menuitem").filter((el) => el.getAttribute("data-value") === "alpha/second")).toHaveLength(1);
@@ -784,7 +819,7 @@ it("keeps every segment after the provider in a namespaced model id", async () =
 describe("the effort ladder follows the source", () => {
   const relay = (efforts?: string[]): ModelEntry[] => [{ ref: "relay/model-x", provider: "relay", model: "model-x", efforts }];
   const onRelay = status({ modelRef: "relay/model-x" });
-  const trigger = (c: HTMLElement) => c.querySelector(".studio-effort-picker") as HTMLElement;
+  const trigger = (c: HTMLElement) => c.querySelector(".model-picker") as HTMLElement;
 
   it("re-reads the ladder when settings report a change", async () => {
     const port = new MockPort();
@@ -817,8 +852,8 @@ describe("a model mode switch", () => {
   const open = async (st: SessionStatus, port = new MockPort()) => {
     vi.spyOn(port, "models").mockResolvedValue(gpt);
     const view = draw({ port, st });
-    await waitFor(() => expect(view.container.querySelector(".studio-effort-picker")?.textContent).not.toContain("未声明"));
-    fireEvent.click(view.container.querySelector(".studio-effort-picker") as HTMLElement);
+    await waitFor(() => expect(view.container.querySelector(".model-picker")?.textContent).not.toContain("未声明"));
+    fireEvent.click(view.container.querySelector(".model-picker") as HTMLElement);
     return { ...view, port };
   };
 
@@ -843,7 +878,7 @@ describe("a model mode switch", () => {
     const port = new MockPort();
     const set = vi.spyOn(port, "setModelMode");
     const { container } = await open(status({ modelRef: "openai/gpt-5.6-sol", modes: pro(true) }), port);
-    expect(container.querySelector(".studio-effort-picker")?.textContent).toContain("Pro 模式");
+    expect(container.querySelector(".model-picker")?.textContent).toContain("Pro 模式");
     const row = screen.getByRole("menuitemcheckbox");
     expect(row.getAttribute("aria-checked")).toBe("true");
     fireEvent.click(row);

@@ -30,8 +30,8 @@ type cliBuildOverrides struct {
 	WorkspaceRoot        string
 	HeadlessApprovalMode string
 	GoalTurnsUnreachable bool
-	HoldOwedChecks       bool
 	Stderr               io.Writer
+	DiagnosticSink       event.Sink
 	OnSessionRecovered   func(control.SessionRecoveryInfo) error
 	Ablation             ablation.Set
 	// NewConversation marks an interactive start that is not resuming anything, so the user's default mode applies.
@@ -78,10 +78,10 @@ func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey b
 		AdditionalDirs:       overrides.AdditionalDirs,
 		HeadlessApprovalMode: overrides.HeadlessApprovalMode,
 		GoalTurnsUnreachable: overrides.GoalTurnsUnreachable,
-		HoldOwedChecks:       overrides.HoldOwedChecks,
 		StatsSource:          surface.CLI,
 		FeedbackSurface:      feedback.SurfaceTUI,
 		Stderr:               overrides.Stderr,
+		DiagnosticSink:       overrides.DiagnosticSink,
 		OnSessionRecovered:   overrides.OnSessionRecovered,
 		Ablation:             overrides.Ablation,
 		NewConversation:      overrides.NewConversation,
@@ -95,7 +95,7 @@ func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey b
 // exits, so nothing in this path can reach SetGoal and goal-only tools are left
 // out of the provider schema.
 func runBuildOverrides(effort *string, allow, dirs []string, workspaceRoot, approval string,
-	onRecovered func(control.SessionRecoveryInfo) error, ablated ablation.Set, holdOwedChecks bool) cliBuildOverrides {
+	onRecovered func(control.SessionRecoveryInfo) error, ablated ablation.Set) cliBuildOverrides {
 	return cliBuildOverrides{
 		Effort:               effort,
 		PermissionAllow:      allow,
@@ -105,6 +105,5 @@ func runBuildOverrides(effort *string, allow, dirs []string, workspaceRoot, appr
 		GoalTurnsUnreachable: true,
 		OnSessionRecovered:   onRecovered,
 		Ablation:             ablated,
-		HoldOwedChecks:       holdOwedChecks,
 	}
 }

@@ -1,21 +1,24 @@
+import { GearMark } from "./GearMark";
 import { FeedbackBadge, feedbackEntryTab } from "./feedbackentry";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { t } from "../i18n";
 import logoWordmark from "../assets/logo-wordmark.svg";
-import type { AccountState } from "../port/port";
-import type { HubPort, RuntimeView, TreeWorkspace } from "../port/hub";
+import type { ApprovalMode } from "../port/port";
+import type { HubPort, RuntimeView, TreeSession, TreeWorkspace } from "../port/hub";
 import { workspaceContains } from "../port/hub";
 import type { RemoteHost } from "../port/remote";
 import type { Adder } from "./addws";
-import { AccountRow } from "./AccountRow";
+import { TooltipButton } from "./TooltipButton";
+import { approvalName } from "./approvals";
 import { ContentMatches } from "./ContentMatches";
 import { useDestinations } from "./navdest";
-import { ICON, type Section } from "./prefsnav";
+import { ICON, SECTION_NAME, SETTINGS, type Section } from "./prefsnav";
 import { RailSearch } from "./railsearch";
 import { RemoteHosts, remoteProjectKey, remoteWorkspaces } from "./RemoteHosts";
 import { remoteProjects } from "./remoteProjects";
 import { StudioIcon } from "./StudioIcon";
 import { UpdateDot } from "./UpdateDot";
+import { UpdateNotice } from "./UpdateNotice";
 import { useHiddenHosts } from "../state/remotehide";
 import { useSidebarFolds } from "../state/sidebarFolds";
 import { chord } from "./keys";
@@ -26,6 +29,10 @@ import type { TreePaging, TreeView } from "./treewindow";
 import { MASK, useHidesAmounts } from "./wallet";
 import { useFileDrop } from "./filedrop";
 import type { PaneView } from "../state/paneview";
+import { RecentSessions } from "./RecentSessions";
+import { sessionRuntime, type SessionScope } from "./sessionScope";
+import { RailFilterContext } from "./railfilter";
+import { SessionFilter } from "./SessionFilter";
 
 interface Props {
   hub: HubPort;
@@ -68,9 +75,9 @@ interface Props {
   onArchive: (path: string, archived: boolean, runtimeId?: string) => Promise<void>;
   onRename: (path: string, title: string, mode?: "inline" | "dialog") => void;
   onCollapse: () => void;
-  account: AccountState | null;
-  accountUnread: string;
   wallet: string;
+  /** The focused session's approval mode, named on the tools entry. */
+  approval?: ApprovalMode;
   onSettings: (section?: string) => void;
   onFiles: () => void;
   onView: (to: PaneView) => void;
@@ -86,6 +93,18 @@ interface Props {
  *  is signed in. It owns only what nothing outside it reads — which scope the
  *  session filter is on, whether the switcher is open, and which workspaces are
  *  folded. Everything else belongs to the window and arrives as a prop. */
+/** The foot's icon row is one toolbar: the arrow keys walk its buttons, Home and End jump to either end. */
+function moveAlongToolbar(event: ReactKeyboardEvent<HTMLDivElement>) {
+  const step = { ArrowRight: 1, ArrowLeft: -1, Home: -Infinity, End: Infinity }[event.key];
+  if (step === undefined) return;
+  const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(":scope > button:not(:disabled)")];
+  const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  if (at < 0) return;
+  event.preventDefault();
+  const to = step === Infinity ? buttons.length - 1 : step === -Infinity ? 0 : (at + step + buttons.length) % buttons.length;
+  buttons[to].focus();
+}
+
 export function Sidebar({
   hub,
   collapsed,
@@ -121,9 +140,8 @@ export function Sidebar({
   onArchive,
   onRename,
   onCollapse,
-  account,
-  accountUnread,
   wallet,
+  approval,
   onSettings,
   onFiles,
   onView,
@@ -133,10 +151,13 @@ export function Sidebar({
   onFind,
   onError,
 }: Props) {
-  const [railScope, setRailScope] = useState<"all" | "live" | "pinned" | "archived">("all");
+  const [railScope, setRailScope] = useState<SessionScope>("all");
   const destinations = useDestinations();
   const [palette, setPalette] = useState(false);
   const [projectPicker, setProjectPicker] = useState(false);
+  const [recent, setRecent] = useState(false);
+  const [located, setLocated] = useState<{ target: string } | null>(null);
+  const locatedOnce = useRef<typeof located>(null);
   const [folded, setFolded] = useSidebarFolds();
   const hideAmounts = useHidesAmounts();
   const hiddenHosts = useHiddenHosts();
@@ -145,19 +166,34 @@ export function Sidebar({
     () => (remotes ?? []).filter((host) => !hiddenHosts.includes(host.name)),
     [remotes, hiddenHosts],
   );
+  const online = (remotes ?? []).filter((h) => h.status === "connected" || h.status === "degraded").length;
   const newSessionRoot = activeWorkspace?.root;
   const startConversation = () => {
     if (onNew) return onNew();
     const runtime = runtimes.find((rt) => rt.id === active);
     return runtime?.host ? onOpenRemote(runtime.host, runtime.root) : onOpen({ root: newSessionRoot });
   };
+  const paletteSettings = useMemo(() => {
+    return SETTINGS.filter((x) => !x.hidden).map((x) => ({ id: `${x.section}:${x.anchor}`, label: t(x.title), path: t(SECTION_NAME[x.section] ?? x.section), keywords: (x.keywords ?? []).join(" ") }));
+  }, []);
+  const scopeCounts = useMemo(() => {
+    const open = tree.flatMap((ws) => ws.sessions).filter((x) => !x.archived);
+    const running = (x: { runtimeId?: string }) => !!x.runtimeId && runs[x.runtimeId]?.live;
+    return {
+      all: open.length,
+      live: open.filter(running).length,
+      waiting: open.filter((x) => !!x.runtimeId && runs[x.runtimeId]?.run === "halt").length,
+      unread: open.filter((x) => x.unread).length,
+      pinned: open.filter((x) => x.pinned).length,
+    };
+  }, [tree, runs]);
   const paletteTree = useMemo(() => [...tree, ...shownRemotes.flatMap((host) =>
     remoteWorkspaces(host, remoteTrees[host.name]).map((ws) => ({ ...ws, host: host.name })))], [tree, shownRemotes, remoteTrees]);
   const [over, setOver] = useState(false);
   const drop = useFileDrop((d) => {
     if (collapsed || adder.busy || d.text) return;
     if (d.paths.length !== 1) {
-      onError(new Error(d.paths.length ? t("请一次拖入一个文件夹") : t("无法取得本机路径，请使用添加文件夹")));
+      onError(new Error(d.paths.length ? t("session.drop_one_folder_at_a") : t("session.the_local_path_is_unavailable")));
       return;
     }
     adder.addPath(d.paths[0]);
@@ -179,31 +215,31 @@ export function Sidebar({
   // the two cannot drift into two different lists of the same thing.
   const commands = useMemo<Command[]>(
     () => [
-      { id: "new", label: t("新建会话"), icon: "plus", keywords: "new session chat 新建",
+      { id: "new", label: t("common.start_a_new_session"), icon: "plus", keywords: "new session chat 新建",
         run: () => void startConversation().catch(onError) },
-      { id: "find", label: t("在这段对话里查找"), icon: "search", keywords: "find search conversation 查找 搜索 对话",
+      { id: "find", label: t("common.find_in_this_conversation"), icon: "search", keywords: "find search conversation 查找 搜索 对话",
         keys: chord("F"), run: onFind },
-      { id: "view-flow", label: t("显示对话"), icon: "menu", keywords: "conversation chat flow 对话 会话", keys: chord("1"), run: () => onView("flow") },
-      { id: "view-analysis", label: t("显示运行分析"), icon: "list", keywords: "run analysis trace 运行 分析", keys: chord("2"), run: () => onView("analysis") },
-      { id: "view-browser", label: t("显示工作台"), icon: "panel", keywords: "workbench browser files 工作台 浏览器", keys: chord("3"), run: () => onView("browser") },
-      { id: "files", label: t("文件"), icon: "file", keywords: "files workspace explorer 文件 工作区", run: onFiles },
-      { id: "storage", label: t("存储"), icon: "file", keywords: "storage disk data 存储 磁盘 数据",
+      { id: "view-flow", label: t("session.show_conversation"), icon: "menu", keywords: "conversation chat flow 对话 会话", keys: chord("1"), run: () => onView("flow") },
+      { id: "view-analysis", label: t("session.show_run_analysis"), icon: "list", keywords: "run analysis trace 运行 分析", keys: chord("2"), run: () => onView("analysis") },
+      { id: "view-browser", label: t("session.show_workbench"), icon: "panel", keywords: "workbench browser files 工作台 浏览器", keys: chord("3"), run: () => onView("browser") },
+      { id: "files", label: t("common.files"), icon: "file", keywords: "files workspace explorer 文件 工作区", run: onFiles },
+      { id: "storage", label: t("common.storage"), icon: "file", keywords: "storage disk data 存储 磁盘 数据",
         run: () => onSettings("storage") },
-      { id: "ext", label: t("工具与集成"), icon: "plug", keywords: "tools mcp skills 工具 集成",
-        run: () => onSettings("ext") },
-      { id: "remote", label: t("运行环境"), icon: "server", keywords: "ssh local remote 运行环境",
+      { id: "ext", label: t("session.tools_and_integrations"), icon: "plug", keywords: "tools mcp skills 工具 集成",
+        run: () => onSettings("extensions") },
+      { id: "remote", label: t("session.where_it_runs"), icon: "server", keywords: "ssh local remote 运行环境",
         run: () => onSettings("remote") },
-      { id: "providers", label: t("模型服务"), icon: "layers", keywords: "model provider 模型 来源 服务",
+      { id: "providers", label: t("common.model_services"), icon: "layers", keywords: "model provider 模型 来源 服务",
         run: () => onSettings("providers") },
-      { id: "usage", label: t("钱包与用量"), icon: "wallet", keywords: "usage cost token 用量 费用",
-        run: () => onSettings("usage") },
-      { id: "feedback", label: t("发送反馈"), icon: "feedback", keywords: "feedback report bug idea suggestion 反馈 报告 问题 建议 意见",
+      { id: "usage", label: t("session.wallet_and_usage"), icon: "wallet", keywords: "usage cost token 用量 费用",
+        run: () => onSettings("spend") },
+      { id: "feedback", label: t("common.send_feedback"), icon: "feedback", keywords: "feedback report bug idea suggestion 反馈 报告 问题 建议 意见",
         run: () => onFeedback("send") },
-      { id: "feedback-mine", label: t("我的反馈"), icon: "feedback", keywords: "feedback receipt status my reply 反馈 回执 进展 我的 回复",
-        status: feedbackUnread > 0 ? t("{n} 项待查看", { n: feedbackUnread }) : undefined, run: () => onFeedback("mine") },
-      { id: "community", label: t("社区与贡献者"), icon: "globe", keywords: "community discord qq group contributors 社区 交流群 加群 贡献者",
+      { id: "feedback-mine", label: t("session.my_feedback"), icon: "feedback", keywords: "feedback receipt status my reply 反馈 回执 进展 我的 回复",
+        status: feedbackUnread > 0 ? t("common.n_to_review", { n: feedbackUnread }) : undefined, run: () => onFeedback("mine") },
+      { id: "community", label: t("common.community_and_contributors"), icon: "globe", keywords: "community discord qq group contributors 社区 交流群 加群 贡献者",
         run: () => onSettings("versions:community") },
-      { id: "settings", label: t("设置"), icon: "settings", keywords: "settings preferences 设置 偏好",
+      { id: "settings", label: t("common.settings"), icon: "settings", keywords: "settings preferences 设置 偏好",
         run: () => onSettings() },
     ],
     [newSessionRoot, onNew, onOpen, onOpenRemote, runtimes, active, onFiles, onView, onSettings, onFeedback, feedbackUnread, onFind, onError],
@@ -225,9 +261,30 @@ export function Sidebar({
   const toggleAll = () => setFolded(allFolded
     ? new Set([...folded].filter((key) => !foldable.includes(key))) : new Set([...folded, ...foldable]));
 
+  const pickRecent = async (host: string, workspace: TreeWorkspace, session: TreeSession) => {
+    const held = sessionRuntime(session, runtimes, host);
+    if (held) onFocusPane(held.id);
+    else if (host) {
+      await onOpenRemote(host, session.workspaceRoot || workspace.root, session.path);
+      await readRemoteTree(host);
+    } else await onOpen({ root: session.workspaceRoot || workspace.root, sessionPath: session.path });
+    setRailScope("all");
+    onFold(host ? remoteProjectKey(host, workspace.root) : workspace.root, false);
+    setLocated({ target: host ? remoteProjectKey(host, workspace.root) + ":" + session.path : session.path });
+  };
+  useEffect(() => {
+    if (!located || recent || locatedOnce.current === located) return;
+    const row = [...document.querySelectorAll<HTMLElement>('.rail [role="treeitem"]')]
+      .find((element) => element.dataset.target === located.target);
+    if (!row) return;
+    row.scrollIntoView?.({ block: "nearest" });
+    row.focus({ preventScroll: true });
+    locatedOnce.current = located;
+  }, [located, recent, tree, remoteTrees]);
 
   return (
     <>
+    {recent && <RecentSessions hub={hub} hosts={shownRemotes} runs={runs} onPick={pickRecent} onClose={() => setRecent(false)} />}
     {projectPicker && <OpenProject hub={hub} adder={adder} hosts={shownRemotes}
       onClose={() => setProjectPicker(false)} onError={onError} onOpen={async (host, root) => {
         await onOpenRemote(host, root);
@@ -240,14 +297,17 @@ export function Sidebar({
       onClose={() => setPalette(false)}
       commands={commands}
       tree={paletteTree}
+      settings={paletteSettings}
+      onOpenSetting={(target) => onSettings(target)}
+      runOf={(id) => (id ? runs[id]?.run : undefined)}
       onOpenSession={(path, ws) => void (ws.host ? onOpenRemote(ws.host, ws.root, path) : onOpen({ sessionPath: path })).catch(onError)}
     />
     {/* 收起而不是卸载：卸掉就丢了侧栏的滚动位置、Inspector 的展开、当前选
         中的面板。inert 是「看不见就够不着」那一半 —— 只做视觉隐藏的话，
         屏幕上没有的栏还能被 Tab 走进去。 */}
-    <button className="railveil" data-action="chrome.rail" tabIndex={-1} aria-label={t("收起工作区栏")} onClick={() => onCollapse()} />
+    <button className="railveil" data-action="chrome.rail" tabIndex={-1} aria-label={t("common.collapse_the_workspace_rail")} onClick={() => onCollapse()} />
     <div className="rail" inert={collapsed} ref={drop}>
-      {over && !collapsed && !adder.busy && <div className="rail-drop" role="status"><StudioIcon name="folder" /><span>{t("松开以添加项目文件夹")}</span></div>}
+      {over && !collapsed && !adder.busy && <div className="rail-drop" role="status"><StudioIcon name="folder" /><span>{t("session.drop_to_add_a_project")}</span></div>}
       <div className="railscroll">
       <div className="studio-rail-head">
         <div className="studio-brand" aria-label="Reasonix Studio">
@@ -255,6 +315,9 @@ export function Sidebar({
             <img className="studio-brand-logo" src={logoWordmark} alt="" draggable={false} />
             <small className="studio-brand-sub">studio</small>
           </span>
+          <button type="button" className="studio-collapse" data-action="chrome.rail" title={t("session.collapse_sidebar")} aria-label={t("session.collapse_sidebar")} onClick={() => onCollapse()}>
+            <StudioIcon name="panel" />
+          </button>
         </div>
         <button
           className="studio-new-task"
@@ -262,34 +325,14 @@ export function Sidebar({
           title="Alt N"
           onClick={() => void startConversation().catch(onError)}
         >
-          <span aria-hidden="true"><StudioIcon name="plus" /></span><b className="studio-label">{t("新建会话")}</b>
+          <span aria-hidden="true"><StudioIcon name="plus" /></span><b className="studio-label">{t("common.start_a_new_session")}</b><kbd>Alt N</kbd>
         </button>
         <button className="studio-search" data-action="workspace.search" title="Ctrl K" onClick={() => setPalette(true)}>
-          <span aria-hidden="true"><StudioIcon name="search" /></span><b className="studio-label">{t("搜索与快捷操作")}</b>
+          <span aria-hidden="true"><StudioIcon name="search" /></span><b className="studio-label">{t("session.search_sessions_and_actions")}</b><kbd>Ctrl K</kbd>
         </button>
-        {!navShown && (
-          <div className="studio-quicknav">
-            {destinations.filter(([mark]) => mark !== "usage").map(([mark, label, section]) => mark === "files" ? (
-              <button key={mark} data-action="files.open" onClick={onFiles}>
-                <span aria-hidden="true"><StudioIcon name="file" /></span><b>{t(label)}</b>
-              </button>
-            ) : (
-              <button key={mark} data-action="settings.section" data-value={section} onClick={() => onSettings(section)}>
-                <span aria-hidden="true"><svg viewBox="0 0 16 16" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">{ICON[mark as Section]}</svg></span><b>{t(label)}</b>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="studio-session-filters" role="group" aria-label={t("会话范围")}>
-          <div className="studio-session-segments">
-            <button data-action="session.filter" data-value="all" aria-pressed={railScope === "all"} onClick={() => setRailScope("all")}><span>{t("全部")}</span></button>
-            <button data-action="session.filter" data-value="live" aria-pressed={railScope === "live"} onClick={() => setRailScope("live")}><span>{t("进行中")}</span></button>
-            <button data-action="session.filter" data-value="pinned" aria-pressed={railScope === "pinned"} onClick={() => setRailScope("pinned")}><span>{t("置顶")}</span></button>
-            <button data-action="session.filter" data-value="archived" aria-pressed={railScope === "archived"} onClick={() => setRailScope("archived")}><span>{t("归档")}</span></button>
-          </div>
-        </div>
       </div>
-      <RailSearch>
+      <RailFilterContext.Provider value={<SessionFilter scope={railScope} counts={scopeCounts} onScope={setRailScope} />}>
+      <RailSearch resetKey={located}>
       <ContentMatches hub={hub} tree={tree} onOpen={onOpen} onError={onError} onReference={onReferenceSession} />
       <Workspaces
         hub={hub}
@@ -301,6 +344,7 @@ export function Sidebar({
         folded={folded}
         onToggleAll={toggleAll}
         allFolded={allFolded}
+        onRecent={() => setRecent(true)}
         canFold={foldable.length > 0}
         onFold={onFold}
         reload={reloadTree}
@@ -350,19 +394,46 @@ export function Sidebar({
         ) : null}
       </Workspaces>
       </RailSearch>
+      </RailFilterContext.Provider>
       </div>
       {!navShown && <div className="railfoot">
-        {destinations.some(([mark]) => mark === "usage") && <button className="studio-wallet" data-action="settings.section" data-value="usage" onClick={() => onSettings("usage")}><span aria-hidden="true"><StudioIcon name="wallet" /></span><b>{t("钱包与用量")}</b>{wallet && <small>{hideAmounts ? MASK : wallet}</small>}</button>}
-        <button className="studio-wallet studio-feedback" data-action="feedback.open" onClick={() => onFeedback(feedbackEntryTab(feedbackUnread))}>
+        <UpdateNotice onOpen={() => onSettings("versions")} />
+        <div className="studio-quicknav" role="toolbar" aria-label={t("session.sidebar_shortcuts")} onKeyDown={moveAlongToolbar}>
+          {destinations.map(([mark, label, section]) => {
+            const reading = mark === "usage" ? (wallet ? (hideAmounts ? MASK : wallet) : "")
+              : mark === "remote" && online > 0 ? t("common.n_online", { n: online })
+              : mark === "tools" && approval ? approvalName(approval) : "";
+            const name = reading ? `${t(label)} · ${reading}` : t(label);
+            const opensFiles = mark === "files";
+            return (
+              <TooltipButton
+                key={mark}
+                className={mark === "usage" ? "studio-wallet" : undefined}
+                data-action={opensFiles ? "files.open" : "settings.section"}
+                data-value={opensFiles ? undefined : section}
+                aria-label={name}
+                title={name}
+                onClick={() => (opensFiles ? onFiles() : onSettings(mark === "usage" ? "spend" : mark === "ext" ? "extensions" : section))}
+              >
+                {mark === "files" ? <StudioIcon name="file" aria-hidden="true" />
+                  : <svg viewBox="0 0 16 16" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.45} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICON[mark as Section]}</svg>}
+                {mark === "remote" && online > 0 && <i className="qdot" data-tone="ok" aria-hidden="true" />}
+              </TooltipButton>
+            );
+          })}
+          <span className="qspace" aria-hidden="true" />
+          <TooltipButton className="studio-settings" data-action="chrome.settings" onClick={() => onSettings()} aria-label={t("common.settings")} title={t("common.settings")} shortcut={chord(",")}>
+            <svg viewBox="0 0 16 16" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.45} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {GearMark}
+            </svg>
+            <UpdateDot />
+          </TooltipButton>
+        </div>
+        <button className="studio-feedback" data-action="feedback.open" onClick={() => onFeedback(feedbackEntryTab(feedbackUnread))}>
           <span aria-hidden="true"><StudioIcon name="feedback" /></span>
-          <b>{t("发送反馈")}</b>
+          <b>{t("common.send_feedback")}</b>
           <FeedbackBadge unread={feedbackUnread} />
         </button>
-        <div className="studio-user-foot">
-          <AccountRow account={account} unread={accountUnread} onOpen={() => onSettings("account")} />
-          <span className="studio-workspace-kind">{t(account?.signedIn ? "个人工作空间" : "本地工作空间")}</span>
-          <button className="studio-settings" data-action="chrome.settings" onClick={() => onSettings()} aria-label={t("设置")}><StudioIcon name="settings" /><UpdateDot /></button>
-        </div>
       </div>}
     </div>
     </>

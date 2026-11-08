@@ -103,7 +103,7 @@ export function useWorkbenchFiles({ port, workspaceRoot, repos = [], path, openP
         const held = parseGrantedFile(path);
         const info = await port.workspacePreviewInfo({ path: held?.rel ?? path, root: held?.root }, controller.signal);
         if (!controller.signal.aborted && info.version !== entry.file?.observedVersion) {
-          const error = t("磁盘内容已变化，未保存的编辑已保留");
+          const error = t("workbench.the_file_changed_on_disk");
           if (entry.error !== error) { entry.error = error; notify(); }
         }
       } catch (e) {
@@ -123,7 +123,7 @@ export function useWorkbenchFiles({ port, workspaceRoot, repos = [], path, openP
     entry.draft = draft;
     notify();
   };
-  const save = async () => {
+  const saveEntry = async (entry: Entry) => {
     if (current.current !== entries || !entry.file || entry.file.readOnly || !dirty(entry) || entry.pending === "save") return;
     const sent = { ...entry.file, content: entry.draft };
     const ticket = ++entry.issued;
@@ -141,7 +141,21 @@ export function useWorkbenchFiles({ port, workspaceRoot, repos = [], path, openP
       if (current.current === entries && ticket === entry.issued) { entry.pending = ""; notify(); }
     }
   };
-  return { ...entry, busy: entry.pending === "save" || (!entry.file && entry.pending === "read"), setDraft, save };
+  const save = () => saveEntry(entry);
+  // Any open file, not only the one on screen: closing a tab asks about its own text.
+  // saveAt resolves true once nothing of the file is left unsaved.
+  const saveAt = async (at: string) => {
+    const e = entries.get(at);
+    if (e) await saveEntry(e);
+    return !e || !dirty(e);
+  };
+  const dropAt = (at: string) => {
+    const e = entries.get(at);
+    if (e?.file) { e.draft = e.file.content; notify(); }
+  };
+  // Every open file whose draft differs from what was read, for the tabs to mark.
+  const unsaved = [...entries].flatMap(([key, e]) => (dirty(e) ? [key] : []));
+  return { ...entry, busy: entry.pending === "save" || (!entry.file && entry.pending === "read"), setDraft, save, saveAt, dropAt, unsaved };
 }
 
 // The diff of a workspace-relative path, read from the repository that holds it.

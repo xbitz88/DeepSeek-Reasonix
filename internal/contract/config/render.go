@@ -160,32 +160,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# turn_narration = \"detailed\"   # between tool calls: brief|detailed (detailed asks for a few lines per batch)\n")
 	}
-	fmt.Fprintf(&b, "compact_ratio       = %s   # fold at this share of the model window (default 0.85)\n", formatFloat(c.Agent.CompactRatio))
-	if c.Agent.Keep != nil {
-		fmt.Fprintf(&b, "keep                = %s   # compaction keep policy: errors, user_marked\n", renderStringArray(c.Agent.Keep))
-	} else {
-		b.WriteString("# keep                = [\"errors\"]   # compaction keep policy: errors, user_marked\n")
-	}
-	if c.Agent.UserTurnKeepTokens > 0 {
-		fmt.Fprintf(&b, "user_turn_keep_tokens = %d   # your own turns kept verbatim through a fold\n", c.Agent.UserTurnKeepTokens)
-	} else {
-		b.WriteString("# user_turn_keep_tokens = 8192   # your own turns kept verbatim through a fold; unset = 5% of the window\n")
-	}
-	if c.Agent.FirstTurnPinTokens > 0 {
-		fmt.Fprintf(&b, "first_turn_pin_tokens = %d   # first turn pinned verbatim into the cached prefix\n", c.Agent.FirstTurnPinTokens)
-	} else {
-		b.WriteString("# first_turn_pin_tokens = 1500   # first turn pinned verbatim into the cached prefix; it is paid for every request\n")
-	}
+	fmt.Fprintf(&b, "compact_ratio       = %s   # fold at this share of the model window (default 0.90)\n", formatFloat(c.Agent.CompactRatio))
 	if c.Agent.CheckpointCeilingRatio > 0 {
 		fmt.Fprintf(&b, "checkpoint_ceiling_ratio = %s   # how small a fold's result must be to be accepted\n", formatFloat(c.Agent.CheckpointCeilingRatio))
 	} else {
 		b.WriteString("# checkpoint_ceiling_ratio = 0.50   # how small a fold's result must be to be accepted\n")
-	}
-	fmt.Fprintf(&b, "context_soft_limit_tokens = %d   # optional earlier absolute fold size; 0 or negative = use model capacity\n", c.Agent.ContextSoftLimitTokens)
-	if c.Agent.RecentKeep > 0 {
-		fmt.Fprintf(&b, "recent_keep         = %d   # minimum recent messages kept verbatim\n", c.Agent.RecentKeep)
-	} else {
-		b.WriteString("# recent_keep         = 2   # minimum recent messages kept verbatim\n")
 	}
 	if len(c.Agent.PlanModeReadOnlyCommands) > 0 {
 		fmt.Fprintf(&b, "plan_mode_read_only_commands = %s   # legacy compatibility only; Plan bash uses Permissions\n", renderStringArray(c.Agent.PlanModeReadOnlyCommands))
@@ -211,7 +190,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	agentSetting(&b, "write_lease_max_wait_minutes", c.Agent.WriteLeaseMaxWaitMinutes, defaults.Agent.WriteLeaseMaxWaitMinutes, "minutes a write waits behind another session's claim before it fails with workspace.claim_timeout; 0 = wait as long as the turn lasts (default), 120 is a sensible limit; user file only")
 	agentSetting(&b, "plan_approval", c.Agent.PlanApproval, defaults.Agent.PlanApproval, "auto: the plan card answers itself and execution starts; user file only")
 	agentSetting(&b, "default_mode", c.Agent.DefaultMode, defaults.Agent.DefaultMode, "plan: a new conversation starts in plan mode (the mode picker still switches it); a resumed one keeps its own; user file only")
-	agentSetting(&b, "host_verification", c.Agent.HostVerification, defaults.Agent.HostVerification, "on: the host holds a turn that changed files open until a check, a review and a sign-off exist; unset or off: it does not (unset still holds them under the delivery preset); the receipt always says what was and was not checked; user file only")
 	if c.Agent.OutputStyle != "" {
 		fmt.Fprintf(&b, "output_style = %q   # persona/tone folded into the prompt\n", c.Agent.OutputStyle)
 	} else {

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { EN } from "./en";
+import { MESSAGES } from "./msg";
 import { NOTICE_TEXT } from "./notices";
 import { NOTICE_VAR_CODES, leftoverDetail, noticeWording } from "./notice_wording";
 
-const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+const placeholders = (s: string) => [...(MESSAGES[s]?.zh ?? s).matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
 
 const PAYLOAD: Record<string, string | undefined> = {
   extension_skipped: JSON.stringify({ extension: "e", point: "tool.before" }),
@@ -17,6 +18,8 @@ const PAYLOAD: Record<string, string | undefined> = {
   compaction_telemetry: JSON.stringify({ mode: "summarized", source_tokens: 122525, projection_tokens: 61192, input_tokens: 40710, output_tokens: 8186, cache_hit_tokens: 256, request_count: 1 }),
   context_composition: JSON.stringify({ total: 561061, at: 419430, active: 400000, parts: [{ name: "tool_output", tokens: 500000 }] }),
   subagent_waiting: JSON.stringify({ task: "fix the typo", by: "rewrite the docs", whole: true }),
+  user_turns_dropped: JSON.stringify({ count: 5, tokens: 1578, budget: 8000 }),
+  kept_turns_folded: JSON.stringify({ count: 2, tokens: 900, budget: 4000 }),
   display_currency: "USD",
   compact_declined: undefined,
   compact_failed: "summary_failed",
@@ -25,7 +28,7 @@ const PAYLOAD: Record<string, string | undefined> = {
 
 describe("notice wording", () => {
   it.each(Object.entries(NOTICE_TEXT))("%s reads in English too", (code, sentence) => {
-    const english = EN[sentence];
+    const english = MESSAGES[sentence]?.en ?? EN[sentence];
     expect(english, `${code}: no English for "${sentence}" - an English window would show the Chinese`).toBeTruthy();
     expect(/[\u4e00-\u9fff]/.test(english), `${code}: the English still holds Chinese`).toBe(false);
   });
@@ -70,6 +73,8 @@ describe("notice wording", () => {
     ["job_stalled", '{"id":"j","quietSeconds":"900"}'],
     ["job_stalled", '{"id":"j","quietSeconds":0}'],
     ["compaction_telemetry", '{"mode":"summarized"}'],
+    ["user_turns_dropped", '{"count":0}'],
+    ["kept_turns_folded", "not json"],
     ["compaction_telemetry", '{"mode":"","source_tokens":1,"projection_tokens":1}'],
     ["compaction_telemetry", '{"mode":"summarized","source_tokens":"122525","projection_tokens":1}'],
     ["compact_failed", "no_such_reason"],

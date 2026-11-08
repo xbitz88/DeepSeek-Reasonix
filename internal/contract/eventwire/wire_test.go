@@ -106,12 +106,12 @@ func TestToWireContextMaintenanceJSON(t *testing.T) {
 }
 
 func TestToWireNoticeCarriesCode(t *testing.T) {
-	w := ToWire(event.Event{Kind: event.Notice, Level: event.LevelInfo, Code: event.NoticeCodeFinalReadiness, Text: "readiness copy"})
+	w := ToWire(event.Event{Kind: event.Notice, Level: event.LevelInfo, Code: event.NoticeCodeEmptyFinal, Text: "empty copy"})
 	b, err := json.Marshal(w)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(b), `"code":"final_readiness"`) {
+	if !strings.Contains(string(b), `"code":"empty_final"`) {
 		t.Fatalf("notice JSON = %s, want a stable code field", b)
 	}
 
@@ -265,23 +265,6 @@ func TestToWireToolOmitsHostOnlyWorkspaceMutationMetadata(t *testing.T) {
 }
 
 func TestToWireTurnOutcomeIsOptionalAndMachineReadable(t *testing.T) {
-	readiness := ToWire(event.Event{
-		Kind:      event.TurnDone,
-		Err:       errors.New("final-answer readiness failed 3 times: missing verification"),
-		Outcome:   event.TurnOutcomeFinalReadiness,
-		Readiness: &event.FinalReadiness{Attempts: 3, Missing: []string{"verification", "review"}},
-	})
-	if readiness.Outcome != event.TurnOutcomeFinalReadiness || readiness.Err == "" || readiness.Readiness == nil || readiness.Readiness.Attempts != 3 {
-		t.Fatalf("readiness wire event = %+v", readiness)
-	}
-	b, err := json.Marshal(readiness)
-	if err != nil {
-		t.Fatalf("marshal readiness: %v", err)
-	}
-	if !strings.Contains(string(b), `"outcome":"final_readiness"`) || !strings.Contains(string(b), `"missing":["verification","review"]`) {
-		t.Fatalf("readiness JSON = %s, want structured outcome", b)
-	}
-
 	ordinary, err := json.Marshal(ToWire(event.Event{Kind: event.TurnDone, Err: errors.New("provider failed")}))
 	if err != nil {
 		t.Fatalf("marshal ordinary error: %v", err)
@@ -587,5 +570,27 @@ func TestToWireSubagentStatusCarriesItsRate(t *testing.T) {
 	quiet, _ := json.Marshal(ToWire(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: "c1", Name: event.SubagentProgressStatusName, Output: "tool"}}))
 	if strings.Contains(string(quiet), `"rate"`) {
 		t.Fatalf("a status with no rate wrote one: %s", quiet)
+	}
+}
+
+// A run sent to the background names its job, so a window can tie the call to it.
+func TestShellExecutionWireNamesItsBackgroundJob(t *testing.T) {
+	w := ToWire(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "c1", Name: "bash", Execution: &event.ShellExecution{State: "background_started", JobID: "bash-3"}}})
+	if w.Tool == nil || w.Tool.Execution == nil || w.Tool.Execution.JobID != "bash-3" {
+		t.Fatalf("wire execution = %+v, want job bash-3", w.Tool)
+	}
+}
+
+// A plan card's input is the list approving starts, so it rides with the card
+// although a plan declares no scope; a plain tool's arguments still do not.
+func TestApprovalWireCarriesAPlansSteps(t *testing.T) {
+	steps := json.RawMessage(`{"todos":[{"content":"a","status":"in_progress"}]}`)
+	plan := ToWire(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "1", Tool: "exit_plan_mode", Kind: "plan", RawInput: steps}})
+	if plan.Approval == nil || string(plan.Approval.Input) != string(steps) {
+		t.Fatalf("plan card input = %+v, want %s", plan.Approval, steps)
+	}
+	call := ToWire(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "2", Tool: "bash", RawInput: json.RawMessage(`{"command":"ls"}`)}})
+	if call.Approval == nil || call.Approval.Input != nil {
+		t.Fatalf("unscoped call input = %+v, want none", call.Approval)
 	}
 }

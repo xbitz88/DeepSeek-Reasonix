@@ -28,17 +28,14 @@ type Record struct {
 	TS               int64                `json:"ts"`
 	RunHeader        *RunHeader           `json:"run_header,omitempty"`
 	Event            *eventwire.Event     `json:"event,omitempty"`
-	ReadinessAudit   *ReadinessAudit      `json:"readiness_audit,omitempty"`
 	ProtocolRecovery string               `json:"protocol_recovery,omitempty"`
 	RecoveryChild    string               `json:"protocol_recovery_child,omitempty"`
 	TurnCompletion   bool                 `json:"turn_completion,omitempty"`
 	ContractShadow   *ContractShadowAudit `json:"contract_shadow,omitempty"`
-	CompletionReport *CompletionReport    `json:"completion_report,omitempty"`
 	EvidenceBundle   *EvidenceBundle      `json:"evidence_bundle,omitempty"`
 	OutcomeProgress  *OutcomeProgress     `json:"outcome_progress,omitempty"`
 	MemoryRecall     *MemoryRecall        `json:"memory_recall,omitempty"`
 	ProjectCheck     *ProjectCheckProbe   `json:"project_check_probe,omitempty"`
-	SubagentHandoff  *SubagentHandoff     `json:"subagent_handoff,omitempty"`
 	// Deltas counts the streamed increments merged into this record; absent
 	// means one. TS stays the first increment's — that is the observation
 	// time-to-first-token readers key on — and EndTS carries the last's.
@@ -128,31 +125,6 @@ type ContractShadowAudit struct {
 	ReadyToFinalize       bool   `json:"ready_to_finalize,omitempty"`
 }
 
-// SubagentHandoff mirrors event.SubagentHandoffAudit: how one delegated child
-// closed. Every field travels, because which cut explains a refusal — entrance,
-// depth, read-only, how long the run was — is what the aggregate cannot say.
-type SubagentHandoff struct {
-	Entrance             string `json:"entrance,omitempty"`
-	Depth                int    `json:"depth,omitempty"`
-	ReadOnly             bool   `json:"read_only,omitempty"`
-	Expected             bool   `json:"expected,omitempty"`
-	Exit                 string `json:"exit,omitempty"`
-	Attempts             int    `json:"attempts,omitempty"`
-	Accepted             int    `json:"accepted,omitempty"`
-	Malformed            int    `json:"malformed,omitempty"`
-	Closed               int    `json:"closed,omitempty"`
-	NeedsWork            int    `json:"needs_work,omitempty"`
-	ReportRound          int    `json:"report_round,omitempty"`
-	FinalRound           int    `json:"final_round,omitempty"`
-	ToolCallsAfterReport int    `json:"tool_calls_after_report,omitempty"`
-	ClaimedStatus        string `json:"claimed_status,omitempty"`
-	AdjudicatedStatus    string `json:"adjudicated_status,omitempty"`
-	LoweredClaims        int    `json:"lowered_claims,omitempty"`
-	Criteria             int    `json:"criteria,omitempty"`
-	Evidence             int    `json:"evidence,omitempty"`
-	Unresolved           int    `json:"unresolved,omitempty"`
-}
-
 // ProjectCheckProbe mirrors event.ProjectCheckProbe: the shadow comparison
 // between the readiness gate's project-check derivation and the ledger's
 // obligations. Identities are recorded, not counted — a class is only
@@ -172,26 +144,6 @@ type ProjectCheckProbe struct {
 type ProjectCheckDiff struct {
 	Identity string `json:"identity"`
 	Class    string `json:"class"`
-}
-
-// CompletionReport mirrors event.CompletionReportAudit with stable keys.
-type CompletionReport struct {
-	Verdict                   string   `json:"verdict"`
-	Risk                      string   `json:"risk,omitempty"`
-	Criteria                  int      `json:"criteria,omitempty"`
-	CriteriaSatisfied         int      `json:"criteria_satisfied,omitempty"`
-	Changes                   int      `json:"changes,omitempty"`
-	ChangesUnreviewed         int      `json:"changes_unreviewed,omitempty"`
-	Verifications             int      `json:"verifications,omitempty"`
-	VerificationsFailed       int      `json:"verifications_failed,omitempty"`
-	VerificationsStale        int      `json:"verifications_stale,omitempty"`
-	VerificationsInconclusive int      `json:"verifications_inconclusive,omitempty"`
-	Gaps                      int      `json:"gaps,omitempty"`
-	GapKinds                  []string `json:"gap_kinds,omitempty"`
-	ClaimsVerified            int      `json:"claims_verified,omitempty"`
-	ClaimsUnbacked            int      `json:"claims_unbacked,omitempty"`
-	OriginRecorded            int      `json:"origin_recorded,omitempty"`
-	OriginMatched             int      `json:"origin_matched,omitempty"`
 }
 
 // EvidenceBundle mirrors event.EvidenceBundleAudit with stable keys.
@@ -214,22 +166,6 @@ type EvidenceBundle struct {
 	ContractRevision int    `json:"contract_revision,omitempty"`
 	ContractDecision string `json:"contract_decision,omitempty"`
 	ContractFailure  string `json:"contract_failure,omitempty"`
-}
-
-// ReadinessAudit mirrors hostaudit.ReadinessAudit with stable snake_case keys.
-type ReadinessAudit struct {
-	Result                    string `json:"result"`
-	Recovered                 bool   `json:"recovered,omitempty"`
-	MissingProjectChecks      int    `json:"missing_project_checks,omitempty"`
-	IncompleteTodos           int    `json:"incomplete_todos,omitempty"`
-	MissingAcceptanceCriteria int    `json:"missing_acceptance_criteria,omitempty"`
-	MissingVerification       int    `json:"missing_verification,omitempty"`
-	MissingStructuredReview   int    `json:"missing_structured_review,omitempty"`
-	MissingPathInspection     int    `json:"missing_path_inspection,omitempty"`
-	MissingSignoff            int    `json:"missing_signoff,omitempty"`
-	MissingMutation           int    `json:"missing_mutation,omitempty"`
-	MissingCapabilities       int    `json:"missing_capabilities,omitempty"`
-	MissingRender             int    `json:"missing_render,omitempty"`
 }
 
 // Recorder is an event.Sink decorator: every event (and optional-capability
@@ -374,146 +310,6 @@ func (r *Recorder) RecordDelegationAudit(a hostaudit.DelegationAudit) {
 	event.RecordDelegationAudit(r.inner, a)
 }
 
-func (r *Recorder) RecordReadinessAudit(a hostaudit.ReadinessAudit) {
-	r.append(Record{ReadinessAudit: &ReadinessAudit{
-		Result:                    string(a.Result),
-		Recovered:                 a.Recovered,
-		MissingProjectChecks:      a.MissingProjectChecks,
-		IncompleteTodos:           a.IncompleteTodos,
-		MissingAcceptanceCriteria: a.MissingAcceptanceCriteria,
-		MissingVerification:       a.MissingVerification,
-		MissingStructuredReview:   a.MissingStructuredReview,
-		MissingPathInspection:     a.MissingPathInspection,
-		MissingSignoff:            a.MissingSignoff,
-		MissingMutation:           a.MissingMutation,
-		MissingCapabilities:       a.MissingCapabilities,
-		MissingRender:             a.MissingRender,
-	}})
-	event.RecordReadinessAudit(r.inner, a)
-}
-
-func (r *Recorder) RecordSubagentHandoff(a event.SubagentHandoffAudit) {
-	r.append(Record{SubagentHandoff: &SubagentHandoff{
-		Entrance:             a.Entrance,
-		Depth:                a.Depth,
-		ReadOnly:             a.ReadOnly,
-		Expected:             a.Expected,
-		Exit:                 a.Exit,
-		Attempts:             a.Attempts,
-		Accepted:             a.Accepted,
-		Malformed:            a.Malformed,
-		Closed:               a.Closed,
-		NeedsWork:            a.NeedsWork,
-		ReportRound:          a.ReportRound,
-		FinalRound:           a.FinalRound,
-		ToolCallsAfterReport: a.ToolCallsAfterReport,
-		ClaimedStatus:        a.ClaimedStatus,
-		AdjudicatedStatus:    a.AdjudicatedStatus,
-		LoweredClaims:        a.LoweredClaims,
-		Criteria:             a.Criteria,
-		Evidence:             a.Evidence,
-		Unresolved:           a.Unresolved,
-	}})
-	event.RecordSubagentHandoff(r.inner, a)
-}
-
-func (r *Recorder) RecordProjectCheckProbe(p event.ProjectCheckProbe) {
-	rec := &ProjectCheckProbe{
-		Declared:         p.Declared,
-		Baseline:         p.Baseline,
-		LegacyBlocked:    p.LegacyBlocked,
-		CandidateBlocked: p.CandidateBlocked,
-		AgreedMissing:    p.AgreedMissing,
-		LegacyAfter:      p.LegacyAfter,
-		CandidateAfter:   p.CandidateAfter,
-	}
-	for _, d := range p.Diffs {
-		rec.Diffs = append(rec.Diffs, ProjectCheckDiff{Identity: d.Identity, Class: d.Class})
-	}
-	r.append(Record{ProjectCheck: rec})
-	event.RecordProjectCheckProbe(r.inner, p)
-}
-
-func (r *Recorder) RecordContractShadow(a event.ContractShadowAudit) {
-	r.append(Record{ContractShadow: &ContractShadowAudit{
-		Intent:                a.Intent,
-		Requirements:          a.Requirements,
-		RequirementsSatisfied: a.RequirementsSatisfied,
-		Checks:                a.Checks,
-		ChecksSatisfied:       a.ChecksSatisfied,
-		Epoch:                 a.Epoch,
-		Verdict:               a.Verdict,
-		Complete:              a.Complete,
-		ReadyToFinalize:       a.ReadyToFinalize,
-	}})
-	event.RecordContractShadow(r.inner, a)
-}
-
-func (r *Recorder) RecordEvidenceBundle(a event.EvidenceBundleAudit) {
-	r.append(Record{EvidenceBundle: &EvidenceBundle{
-		Sealed:      a.Sealed,
-		Record:      a.Record,
-		Generation:  a.Generation,
-		Integrity:   a.Integrity,
-		Receipts:    a.Receipts,
-		FailureCode: a.FailureCode,
-
-		SnapshotComplete:   a.SnapshotComplete,
-		UnobservedCompared: a.UnobservedCompared,
-		UnobservedChanges:  a.UnobservedChanges,
-
-		Outcome:           a.Outcome,
-		DivergenceClass:   a.DivergenceClass,
-		DivergenceReasons: a.DivergenceReasons,
-
-		ContractRevision: a.ContractRevision,
-		ContractDecision: a.ContractDecision,
-		ContractFailure:  a.ContractFailure,
-	}})
-	event.RecordEvidenceBundle(r.inner, a)
-}
-
-func (r *Recorder) RecordCompletionReport(a event.CompletionReportAudit) {
-	r.append(Record{CompletionReport: &CompletionReport{
-		Verdict:                   a.Verdict,
-		Risk:                      a.Risk,
-		Criteria:                  a.Criteria,
-		CriteriaSatisfied:         a.CriteriaSatisfied,
-		Changes:                   a.Changes,
-		ChangesUnreviewed:         a.ChangesUnreviewed,
-		Verifications:             a.Verifications,
-		VerificationsFailed:       a.VerificationsFailed,
-		VerificationsStale:        a.VerificationsStale,
-		VerificationsInconclusive: a.VerificationsInconclusive,
-		Gaps:                      a.Gaps,
-		GapKinds:                  a.GapKinds,
-		ClaimsVerified:            a.ClaimsVerified,
-		ClaimsUnbacked:            a.ClaimsUnbacked,
-		OriginRecorded:            a.OriginRecorded,
-		OriginMatched:             a.OriginMatched,
-	}})
-	event.RecordCompletionReport(r.inner, a)
-}
-
-func (r *Recorder) RecordOutcomeProgress(sample hostaudit.OutcomeSample) {
-	r.append(Record{OutcomeProgress: &OutcomeProgress{
-		Round:          sample.Round,
-		Exploration:    sample.Exploration,
-		Verification:   sample.Verification,
-		Objective:      sample.Objective,
-		Regression:     sample.Regression,
-		Churn:          sample.Churn,
-		LegacyGain:     sample.LegacyGain,
-		Discriminating: sample.Discriminating,
-		DebtAge:        sample.DebtAge,
-		BlindMutations: sample.BlindMutations,
-		Stall:          sample.Stall,
-		StallAge:       sample.StallAge,
-		StallMutations: sample.StallMutations,
-	}})
-	event.RecordOutcomeProgress(r.inner, sample)
-}
-
 func (r *Recorder) RecordMemoryRecall(a event.MemoryRecallAudit) {
 	rec := &MemoryRecall{
 		CharBudget: a.CharBudget, UsedChars: a.UsedChars, Omitted: a.Omitted,
@@ -539,11 +335,6 @@ func (r *Recorder) RecordMemoryRecall(a event.MemoryRecallAudit) {
 // adds no optional-capability contract for every wrapper to carry.
 func (r *Recorder) RecordRunHeader(h RunHeader) {
 	r.append(Record{RunHeader: &h})
-}
-
-func (r *Recorder) RecordProtocolRecovery(a event.ProtocolRecoveryAudit) {
-	r.append(Record{ProtocolRecovery: string(a.Kind), RecoveryChild: a.ChildID})
-	event.RecordProtocolRecovery(r.inner, a)
 }
 
 func (r *Recorder) RecordTurnCompletion() {

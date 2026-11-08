@@ -29,10 +29,9 @@ const (
 
 // Compaction mode labels.
 const (
-	CompactionModeNative     = "native"
 	CompactionModeSummarized = "summarized"
 	CompactionModeDegraded   = "degraded"
-	CompactionModeSnip       = "snip"
+	CompactionModeArchived   = "archived"
 )
 
 // CompactRequest is a maintenance the user asked for. Asking is what makes it
@@ -92,7 +91,7 @@ func CompactDeclineText(reason CompactionNoopReason) string {
 	case NoopNoNewClosedPrefix:
 		return "nothing has closed since the last checkpoint"
 	case NoopFoldBelowEconomics:
-		return "too little has been added to pay for another summary"
+		return "too little has been added since the last fold to be worth another one"
 	case NoopActiveTurnBoundary:
 		return "the turn in flight has to finish first"
 	case NoopFoldEmptyAfterHooks:
@@ -125,18 +124,15 @@ type CompactionTelemetry struct {
 	CoverageRequired int `json:"coverage_required,omitempty"`
 	CoverageMissing  int `json:"coverage_missing,omitempty"`
 	// CoverageBackstopped: the host wrote the dropped facts in itself.
-	CoverageBackstopped bool `json:"coverage_backstopped,omitempty"`
-	// SummaryUsage is the transaction's whole bill. The flat fields below are
-	// its input/output/cache halves, kept for the existing detail line.
-	SummaryUsage      sessionstore.CompactionUsage `json:"summary_usage,omitzero"`
-	InputTokens       int                          `json:"input_tokens"`
-	OutputTokens      int                          `json:"output_tokens"`
-	CacheHitTokens    int                          `json:"cache_hit_tokens"`
-	CacheMissTokens   int                          `json:"cache_miss_tokens"`
-	CacheWriteTokens  int                          `json:"cache_write_tokens"`
-	RequestCount      int                          `json:"request_count"`
-	ProviderRequestID string                       `json:"provider_request_id,omitempty"`
-	Error             string                       `json:"error,omitempty"`
+	CoverageBackstopped bool   `json:"coverage_backstopped,omitempty"`
+	InputTokens         int    `json:"input_tokens"`
+	OutputTokens        int    `json:"output_tokens"`
+	CacheHitTokens      int    `json:"cache_hit_tokens"`
+	CacheMissTokens     int    `json:"cache_miss_tokens"`
+	CacheWriteTokens    int    `json:"cache_write_tokens"`
+	RequestCount        int    `json:"request_count"`
+	ProviderRequestID   string `json:"provider_request_id,omitempty"`
+	Error               string `json:"error,omitempty"`
 }
 
 // summaryContentHash fingerprints a compaction summary for projection metadata.

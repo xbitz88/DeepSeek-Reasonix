@@ -34,8 +34,14 @@ export function cheapestEffort(efforts: string[]): string {
 // xhigh and max are distinct rungs on the ladders that carry both, so they
 // cannot share a name.
 const EFFORT_LABELS: Record<string, string> = {
-  auto: "自动", disabled: "关闭", none: "不思考", minimal: "最轻量", low: "快速", medium: "平衡", high: "深入", xhigh: "超深入", max: "极致",
+  auto: "common.auto", disabled: "common.close", none: "composer.no_reasoning", minimal: "composer.minimal", low: "composer.fast", medium: "composer.balanced", high: "composer.deep", xhigh: "composer.extra_deep", max: "composer.maximum",
 };
+
+export function effortShort(value?: string, modes?: ModelMode[]): string {
+  const id = (value || "auto").toLowerCase();
+  const on = modes?.find((m) => m.active);
+  return `${t(EFFORT_LABELS[id] ?? id)}${on ? ` · ${modeLabel(on)}` : ""}`;
+}
 
 export function effortReading(value?: string, modes?: ModelMode[]): string {
   const id = (value || "auto").toLowerCase();
@@ -48,8 +54,8 @@ export function effortReading(value?: string, modes?: ModelMode[]): string {
 // The kernel names a mode's strings by key; the wording is ours. A key this
 // build has no words for shows the mode's id rather than nothing.
 const MODE_TEXT: Record<string, string> = {
-  "model_mode.pro": "Pro 模式",
-  "model_mode.pro.hint": "更慢：模型为同一请求做更多推理，消耗的 token 与费用明显更高。仅对当前会话生效。",
+  "model_mode.pro": "composer.pro_mode",
+  "model_mode.pro.hint": "composer.slower_the_model_does_more",
 };
 
 export function modeLabel(mode: ModelMode): string {
@@ -84,21 +90,21 @@ export function effortApi(value: string): string {
 export function effortDescription(value: string, forcedThinking = false, cheapest = ""): string {
   const id = value.toLowerCase();
   const base = t(({
-    auto: "使用模型默认或自适应策略，按任务复杂度调整",
-    disabled: "不发送推理强度参数，使用服务端默认设置",
-    none: "不做推理直接作答，响应最快，适合简单问答",
-    minimal: "比快速档更轻；GLM-5.2 会跳过思考",
-    low: "轻量思考，适合改写、提取和明确的小任务",
-    medium: "兼顾响应速度与可靠性，适合大多数任务",
-    high: "投入更多时间分析复杂上下文与执行方案",
-    xhigh: "比深入投入更多推理，适合困难的多步问题",
-    max: "用于最复杂的问题，等待时间与消耗最高",
+    auto: "composer.effort_desc.auto",
+    disabled: "composer.effort_desc.disabled",
+    none: "composer.effort_desc.none",
+    minimal: "composer.effort_desc.minimal",
+    low: "composer.effort_desc.low",
+    medium: "composer.effort_desc.medium",
+    high: "composer.effort_desc.high",
+    xhigh: "composer.effort_desc.xhigh",
+    max: "composer.effort_desc.max",
   } as Record<string, string>)[id] ?? value);
   // A model that cannot switch thinking off still reasons at its cheapest
   // level, and still bills for it. That is the rung a saved "off" lands on, so
   // it is the one that would otherwise read as free.
   if (forcedThinking && cheapest !== "" && id === cheapest.toLowerCase()) {
-    return `${base} · ${t("思考仍开启并计费，该模型无法关闭思考")}`;
+    return `${base} · ${t("composer.thinking_stays_on_and_is")}`;
   }
   return base;
 }
@@ -110,13 +116,13 @@ export function effortMenu(efforts: string[], modelLabel: string, onDeclare: str
   const declared = efforts.length > 0;
   const cheapest = cheapestEffort(efforts);
   return [
-    { value: "__effort-heading", label: t("推理强度"), right: modelLabel, header: true },
-    ...(declared ? [] : [{ value: onDeclare, label: t("声明推理档位"), desc: t("这个端点没有报告推理档位，中转站通常不转发这项能力。将打开该来源的编辑表单，可以选择思考参数或直接填写档位。") }]),
+    { value: "__effort-heading", label: t("composer.reasoning_effort"), right: modelLabel, header: true },
+    ...(declared ? [] : [{ value: onDeclare, label: t("composer.declare_reasoning_levels"), desc: t("composer.this_endpoint_reported_no_reasoning") }]),
     ...efforts.map((value) => ({
       value,
       label: effortLabel(value),
       meta: effortApi(value),
-      badge: value === "auto" ? t("推荐") : undefined,
+      badge: value === "auto" ? t("composer.recommended") : undefined,
       recommended: value === "auto",
       strength: value === "disabled" || value === "none" ? 0 : ({ auto: 1, low: 1, medium: 2, high: 3, xhigh: 4, max: 4 } as Record<string, number>)[value.toLowerCase()] ?? 1,
       desc: effortDescription(value, forcedThinking, cheapest),
@@ -125,10 +131,10 @@ export function effortMenu(efforts: string[], modelLabel: string, onDeclare: str
       value: MODE_ROW + mode.id,
       label: modeLabel(mode),
       desc: MODE_TEXT[mode.hintKey] ? t(MODE_TEXT[mode.hintKey]) : undefined,
-      badge: mode.costlier ? t("费用更高") : undefined,
+      badge: mode.costlier ? t("composer.costs_more") : undefined,
       toggle: mode.active,
       divide: i === 0,
     })),
-    ...(declared ? [{ value: "__effort-note", label: t("仅显示当前模型实际支持的档位。"), right: t("按模型生效"), header: true }] : []),
+    ...(declared ? [{ value: "__effort-note", label: t("composer.only_levels_actually_supported_by"), header: true }] : []),
   ];
 }

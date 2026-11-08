@@ -21,7 +21,6 @@ type windowHost interface {
 	prepareSamplingRequest(ctx context.Context) (samplingRequest, error)
 	interceptCompactionPrepare(ctx context.Context, fold []provider.Message, guidance string) ([]provider.Message, string, error)
 	interceptCompactionComplete(ctx context.Context, summary string) (string, error)
-	annotateFailureDiagnostics(ctx context.Context, region []provider.Message, protected []bool) []provider.Message
 	Session() *sessionstore.Session
 }
 
@@ -33,7 +32,6 @@ type contextWindow struct {
 	sess                   *sessionRuntime
 	svc                    *agentServices
 	ablation               ablation.Set
-	keepPolicy             KeepPolicy
 	strictAlternatingRoles bool
 	activeTurnCreatedAt    *atomic.Int64
 	windowProbe            *contextWindowProbe
@@ -44,7 +42,7 @@ type contextWindow struct {
 func (a *Agent) window() *contextWindow {
 	return &contextWindow{
 		agentConfig: &a.agentConfig, windowHost: a, sess: &a.sess, svc: &a.svc,
-		ablation: a.ablation, keepPolicy: a.keepPolicy, strictAlternatingRoles: a.strictAlternatingRoles,
+		ablation: a.ablation, strictAlternatingRoles: a.strictAlternatingRoles,
 		activeTurnCreatedAt: &a.activeTurnCreatedAt, windowProbe: &a.windowProbe,
 	}
 }

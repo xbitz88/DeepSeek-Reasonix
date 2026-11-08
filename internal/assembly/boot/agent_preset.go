@@ -5,7 +5,6 @@ import (
 	"reasonix/internal/contract/agentpreset"
 	"reasonix/internal/contract/tool"
 	"reasonix/internal/ext/plugin"
-	"reasonix/internal/runtime/bestof"
 	"reasonix/internal/tools/advisor"
 	"reasonix/internal/tools/builtin"
 	"reasonix/internal/tools/script"
@@ -55,9 +54,7 @@ func CoreProviderToolNames() []string {
 		"read_file",
 		"edit_file",
 		"write_file",
-		"compress",
 		"recall",
-		"context_budget",
 		"use_capability",
 	}
 }
@@ -73,7 +70,6 @@ func HostControlToolNames() []string {
 		"update_goal",
 		"todo_write",
 		"complete_step",
-		"setting",
 	}
 }
 
@@ -90,15 +86,6 @@ func GoalOnlyToolNames() []string {
 // dropping them would measure more than the contract.
 func EvidenceToolNames() []string {
 	return []string{"complete_step"}
-}
-
-// BrowserToolNames are shown when the assembly has a browser to drive.
-func BrowserToolNames() []string {
-	var names []string
-	for _, t := range builtin.BrowserTools(nil) {
-		names = append(names, t.Name())
-	}
-	return names
 }
 
 // ComputerToolNames are shown when the host can operate this machine's
@@ -158,13 +145,9 @@ func applyUnifiedProviderToolSurface(reg *tool.Registry, goalTurnsUnreachable bo
 			allow = append(allow, name)
 		}
 	}
-	// A browser tool is shown only with a browser session behind it, which the
-	// config decides at boot, so the schema stays the same for the whole session.
-	for _, name := range BrowserToolNames() {
-		if t, ok := reg.Get(name); ok && builtin.BrowserBound(t) {
-			allow = append(allow, name)
-		}
-	}
+	// The browser tools stay out of the schema: use_capability's description
+	// indexes them, and a model that sees a browser but not web_fetch opens a
+	// page to read a JSON endpoint.
 	for _, name := range ComputerToolNames() {
 		if t, ok := reg.Get(name); ok && builtin.ComputerBound(t) {
 			allow = append(allow, name)
@@ -172,7 +155,7 @@ func applyUnifiedProviderToolSurface(reg *tool.Registry, goalTurnsUnreachable bo
 	}
 	// advise, best_of_n, run_script, the peer tools and read_mcp_resource are
 	// registered only when config asks, at boot; present_files follows the same rule.
-	for _, name := range []string{advisor.Name, bestof.Name, script.Name, "list_peers", "send_peer_message", "dispatch_to_project", "open_projects", "view_image", "present_files", plugin.ResourceReadToolName} {
+	for _, name := range []string{advisor.Name, script.Name, "list_peers", "send_peer_message", "dispatch_to_project", "open_projects", "view_image", plugin.ResourceReadToolName} {
 		if _, ok := reg.Get(name); ok {
 			allow = append(allow, name)
 		}
@@ -185,13 +168,6 @@ func applyUnifiedProviderToolSurface(reg *tool.Registry, goalTurnsUnreachable bo
 		}
 	}
 	reg.SetProviderVisibleTools(allow)
-}
-
-// ApplyUnifiedProviderToolSurface restricts a registry to what a provider is
-// shown, at this arm. Exported so a harness reproduces the real surface
-// instead of a second copy of this rule.
-func ApplyUnifiedProviderToolSurface(reg *tool.Registry, goalTurnsUnreachable bool, arm ablation.Set) {
-	applyUnifiedProviderToolSurface(reg, goalTurnsUnreachable, arm, nil)
 }
 
 // pinnedMCPServers is the always-load servers whose schema was known at boot.

@@ -212,14 +212,14 @@ func TestToolApprovalModeAutoForcesMemoryAskRules(t *testing.T) {
 	}
 }
 
-func TestToolApprovalModeYoloForcesMemoryAskRules(t *testing.T) {
+func TestToolApprovalModeYoloDoesNotAskBeforeMemoryWrites(t *testing.T) {
 	c := New(Options{})
 	c.SetToolApprovalMode(ToolApprovalYolo)
 
 	gate := c.newInteractiveGate()
 	for _, toolName := range []string{"remember", "forget"} {
-		if got := gate.Policy.Decide(toolName, false, json.RawMessage(`{}`)); got != permission.Ask {
-			t.Fatalf("%s under yolo mode = %v, want ask", toolName, got)
+		if got := gate.Policy.Decide(toolName, false, json.RawMessage(`{}`)); got != permission.Allow {
+			t.Fatalf("%s under yolo mode = %v, want allow", toolName, got)
 		}
 	}
 	// Verify that regular tools ARE auto-allowed in YOLO (sanity check).
@@ -968,6 +968,23 @@ func TestSetAutoApproveToolsDoesNotDrainPendingAsk(t *testing.T) {
 }
 
 func TestDismissedAskCancelsTurnWithoutModelContinuation(t *testing.T) {
+	dismissAskAndCheckTheTurnStops(t)
+}
+
+// The answer and the cancel that marks it a skip are two steps. The turn must
+// read as skipped whichever of them it meets first, so the scenario is run
+// often enough for the window between them to be hit under the race detector.
+func TestDismissedAskIsASkipWhicheverStepTheTurnMeetsFirst(t *testing.T) {
+	for range 400 {
+		dismissAskAndCheckTheTurnStops(t)
+		if t.Failed() {
+			return
+		}
+	}
+}
+
+func dismissAskAndCheckTheTurnStops(t *testing.T) {
+	t.Helper()
 	askCh := make(chan event.Ask, 1)
 	turnDone := make(chan event.Event, 1)
 	c := New(Options{
@@ -983,11 +1000,13 @@ func TestDismissedAskCancelsTurnWithoutModelContinuation(t *testing.T) {
 
 	continued := false
 	if got := c.runGuarded(func(ctx context.Context) error {
-		_, err := c.Ask(ctx, sampleAskQuestions())
-		if err == nil {
+		if _, err := c.Ask(ctx, sampleAskQuestions()); err != nil {
+			return err
+		}
+		if ctx.Err() == nil {
 			continued = true
 		}
-		return err
+		return ctx.Err()
 	}); got != turnStarted {
 		t.Fatalf("runGuarded = %v, want turnStarted", got)
 	}
@@ -996,8 +1015,8 @@ func TestDismissedAskCancelsTurnWithoutModelContinuation(t *testing.T) {
 
 	select {
 	case done := <-turnDone:
-		if !done.Cancelled {
-			t.Fatalf("dismissed Ask TurnDone = %+v, want Cancelled", done)
+		if done.Cancelled || done.Err != nil {
+			t.Fatalf("dismissed Ask TurnDone = %+v, want a finished turn", done)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("dismissed Ask did not finish the turn")

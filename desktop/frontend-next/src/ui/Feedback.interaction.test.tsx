@@ -11,7 +11,10 @@ import { HttpError, type AgentPort } from "../port/port";
 import { FEEDBACK_CODE, type FeedbackEnv } from "../port/feedback";
 import { host } from "../port/host";
 
-beforeEach(dropDraft);
+beforeEach(() => {
+  localStorage.clear();
+  dropDraft();
+});
 
 afterEach(() => {
   cleanup();
@@ -46,7 +49,7 @@ function setup(over: Partial<FeedbackEnv> = {}, tab: "send" | "mine" = "send") {
 
 const body = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: /发生了什么/ });
 const name = () => screen.getByRole<HTMLInputElement>("textbox", { name: /昵称/ });
-const send = () => screen.getByRole<HTMLButtonElement>("button", { name: /发送反馈|重试发送/, hidden: false });
+const send = () => screen.getByRole<HTMLButtonElement>("button", { name: /^发送$|重试发送/, hidden: false });
 const ready = async () => {
   await screen.findByText("随反馈一起发送的环境信息");
 };
@@ -59,6 +62,52 @@ async function fill(text = "侧栏在缩放窗口后丢失选中项", nick = "ad
 }
 
 describe("feedback form", () => {
+  it("remembers submitted contact across fresh forms and lets an empty submission clear it", async () => {
+    const contact = () => screen.getByRole<HTMLInputElement>("textbox", { name: /联系方式/ });
+    setup();
+    await fill();
+    await userEvent.type(contact(), "ada@example.com");
+    await userEvent.click(send());
+    await screen.findByText("收到了，谢谢");
+    cleanup();
+    dropDraft();
+    setup();
+    await fill();
+    expect(contact().value).toBe("ada@example.com");
+    await userEvent.clear(contact());
+    await userEvent.click(send());
+    await screen.findByText("收到了，谢谢");
+    cleanup();
+    dropDraft();
+    setup();
+    await ready();
+    expect(contact().value).toBe("");
+  });
+
+  it("keeps an unsent draft ahead of remembered contact without persisting a failed submission", async () => {
+    const contact = () => screen.getByRole<HTMLInputElement>("textbox", { name: /联系方式/ });
+    const { port } = setup();
+    await fill();
+    await userEvent.type(contact(), "saved@example.com");
+    await userEvent.click(send());
+    await screen.findByText("收到了，谢谢");
+    await userEvent.click(screen.getByRole("button", { name: "再写一条" }));
+    await userEvent.type(body(), "another report");
+    await userEvent.clear(contact());
+    vi.spyOn(port, "sendFeedback").mockRejectedValueOnce(new Error("offline"));
+    await userEvent.click(send());
+    await screen.findByRole("button", { name: "重试发送" });
+    cleanup();
+    setup();
+    await ready();
+    expect(contact().value).toBe("");
+    cleanup();
+    dropDraft();
+    setup();
+    await ready();
+    expect(contact().value).toBe("saved@example.com");
+  });
+
   it("holds Send back until there is text and a nickname, and counts UTF-8 bytes", async () => {
     setup();
     await ready();
@@ -98,7 +147,7 @@ describe("feedback form", () => {
     await ready();
     expect(name().value).toBe("老王");
     const env = screen.getByText("随反馈一起发送的环境信息").closest("section")!;
-    expect(within(env).getByText(/v2\.24\.0/)).toBeTruthy();
+    expect(within(env).getAllByText(/v2\.24\.0/).length).toBeGreaterThan(0);
     expect(env.querySelector("input, textarea")).toBeNull();
   });
 
@@ -108,16 +157,6 @@ describe("feedback form", () => {
     expect(screen.getByText("只有被我们登记为议题的反馈才会公开")).toBeTruthy();
     await userEvent.click(screen.getByRole("link", { name: "按安全策略私下报告" }));
     expect(port.openExternal).toHaveBeenCalledWith(expect.stringContaining("/security/policy"));
-  });
-
-  it("sends ideas and questions to the discussions board through the shell's external opener, and says bugs go through Send", async () => {
-    const { port } = setup();
-    await ready();
-    expect(screen.getByText(/建议、想法和提问放在讨论区/)).toBeTruthy();
-    expect(screen.getByText(/bug 和错误请用下面的发送/)).toBeTruthy();
-    await userEvent.click(screen.getByRole("link", { name: "想法与讨论" }));
-    expect(port.openExternal).toHaveBeenCalledWith("https://github.com/esengine/DeepSeek-Reasonix/discussions");
-    expect(port.openExternal).toHaveBeenCalledTimes(1);
   });
 
   it("offers no window-capture control", async () => {
@@ -141,7 +180,7 @@ describe("screenshots", () => {
       await userEvent.type(body(), "另一件事");
       await act(reads.pending[0]!);
       await userEvent.click(send());
-      await screen.findByText("已收到你的反馈");
+      await screen.findByText("收到了，谢谢");
       expect(spy.mock.calls[1]![0].images).toEqual([]);
     } finally {
       reads.restore();
@@ -160,7 +199,7 @@ describe("screenshots", () => {
       await act(reads.pending[0]!);
       expect(screen.getByAltText("retry.png")).toBeTruthy();
       await userEvent.click(send());
-      await screen.findByText("已收到你的反馈");
+      await screen.findByText("收到了，谢谢");
       expect(spy.mock.calls[1]![0].images.map((image) => image.name)).toEqual(["retry.png"]);
     } finally {
       reads.restore();
@@ -184,7 +223,7 @@ describe("screenshots", () => {
       expect(screen.queryByAltText("previous.png")).toBeNull();
       expect(screen.getByAltText("current.png")).toBeTruthy();
       await userEvent.click(send());
-      await screen.findByText("已收到你的反馈");
+      await screen.findByText("收到了，谢谢");
       expect(spy.mock.calls[1]![0].images.map((image) => image.name)).toEqual(["current.png"]);
     } finally {
       reads.restore();
@@ -243,7 +282,7 @@ describe("screenshots", () => {
     setup();
     await ready();
     await userEvent.click(screen.getByRole("tab", { name: "我的反馈" }));
-    await userEvent.click(screen.getByRole("tab", { name: "发送反馈" }));
+    await userEvent.click(screen.getByRole("tab", { name: "写新反馈" }));
     const node = target === "heading" ? document.querySelector("#fbk-title")! : document.activeElement!;
     fireEvent.paste(node, { clipboardData: { files: [png("dialog.png")] } });
     expect(await screen.findByAltText("dialog.png")).toBeTruthy();
@@ -256,7 +295,7 @@ describe("screenshots", () => {
     await ready();
     await userEvent.click(screen.getByRole("tab", { name: "我的反馈" }));
     fireEvent.paste(document.activeElement!, { clipboardData: { files: [png("hidden.png")] } });
-    await userEvent.click(screen.getByRole("tab", { name: "发送反馈" }));
+    await userEvent.click(screen.getByRole("tab", { name: "写新反馈" }));
     expect(heldDraft().shots).toEqual([]);
     expect(screen.queryByAltText("hidden.png")).toBeNull();
   });
@@ -275,7 +314,7 @@ describe("screenshots", () => {
     paste("retry.png");
     expect(await screen.findByAltText("retry.png")).toBeTruthy();
     await userEvent.click(send());
-    await screen.findByText("已收到你的反馈");
+    await screen.findByText("收到了，谢谢");
     expect(paste("sent.png")).toBe(true);
     await userEvent.click(screen.getByRole("button", { name: "再写一条" }));
     expect(heldDraft().shots).toEqual([]);
@@ -324,7 +363,7 @@ describe("screenshots", () => {
     expect(await screen.findByText(/huge\.png：超过/)).toBeTruthy();
     expect(screen.getByText(/c\.png：最多 2 张/)).toBeTruthy();
     await waitFor(() => expect(document.querySelectorAll(".fbk-shots li")).toHaveLength(2));
-    await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: /添加截图/ }).disabled).toBe(true));
+    await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: /添加图片/ }).disabled).toBe(true));
   });
 });
 
@@ -334,7 +373,7 @@ describe("sending", () => {
     port.sendFeedback = vi.fn(async () => ({ receipt: "FB-AAAA-0001", status: "received", createdAt: "2026-10-01T00:00:00Z", redacted: false, underReview: true })) as AgentPort["sendFeedback"];
     await fill();
     await userEvent.click(send());
-    expect(await screen.findByText("已收到你的反馈")).toBeTruthy();
+    expect(await screen.findByText("收到了，谢谢")).toBeTruthy();
     expect(screen.getByText(/正在审核中/)).toBeTruthy();
   });
 
@@ -348,7 +387,7 @@ describe("sending", () => {
     await screen.findByAltText("s.png");
     await userEvent.click(send());
 
-    expect(await screen.findByText("已收到你的反馈")).toBeTruthy();
+    expect(await screen.findByText("收到了，谢谢")).toBeTruthy();
     const req = spy.mock.calls[0]![0];
     expect(req).toMatchObject({ category: "idea", displayName: "ada", contact: "ada@example.com", body: "侧栏在缩放窗口后丢失选中项" });
     expect(req.idempotencyKey).toMatch(/\S{8,}/);
@@ -389,7 +428,7 @@ describe("sending", () => {
     expect(body().value).toBe("");
     await userEvent.type(body(), "另一件事");
     await userEvent.click(send());
-    await screen.findByText("已收到你的反馈");
+    await screen.findByText("收到了，谢谢");
     expect(spy.mock.calls[1]![0].idempotencyKey).not.toBe(spy.mock.calls[0]![0].idempotencyKey);
   });
 });
@@ -487,7 +526,7 @@ describe("refusals", () => {
     await screen.findByRole("alert");
     sessionStorage.clear();
     await userEvent.click(screen.getByRole("button", { name: "重试发送" }));
-    await screen.findByText("已收到你的反馈");
+    await screen.findByText("收到了，谢谢");
     expect(spy).toHaveBeenCalledTimes(2);
     expect(spy.mock.calls[1]![0].idempotencyKey).toBe(spy.mock.calls[0]![0].idempotencyKey);
   });
@@ -502,7 +541,7 @@ describe("refusals", () => {
     sessionStorage.clear();
     await userEvent.type(body(), "，补充一句");
     await userEvent.click(send());
-    await screen.findByText("已收到你的反馈");
+    await screen.findByText("收到了，谢谢");
     expect(spy.mock.calls[1]![0].idempotencyKey).not.toBe(spy.mock.calls[0]![0].idempotencyKey);
   });
 
@@ -568,7 +607,7 @@ describe("dialog", () => {
     setup();
     await ready();
     await waitFor(() => expect(document.activeElement).toBe(body()));
-    const send = screen.getByRole("tab", { name: "发送反馈" });
+    const send = screen.getByRole("tab", { name: "写新反馈" });
     send.focus();
     await userEvent.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "我的反馈", selected: true })).toBeTruthy();
@@ -624,7 +663,7 @@ describe("dialog", () => {
     const spy = vi.spyOn(again.port, "sendFeedback");
     await userEvent.type(name(), "ada");
     await userEvent.click(send());
-    expect(await screen.findByText("已收到你的反馈")).toBeTruthy();
+    expect(await screen.findByText("收到了，谢谢")).toBeTruthy();
     expect(spy.mock.calls[0]![0].images).toHaveLength(1);
     expect(spy.mock.calls[0]![0].images[0]).toMatchObject({ name: "two.png" });
     cleanup();
@@ -668,21 +707,18 @@ describe("dialog", () => {
 });
 
 describe("feedback dialog size", () => {
-  it("fills the window on request and returns to the reading column", async () => {
+  it("opens wide for the two columns of My feedback and narrows again for the form", async () => {
     setup({}, "mine");
     const dialog = screen.getByRole("dialog");
-    const toggle = screen.getByRole("button", { name: "铺满窗口" });
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(dialog.hasAttribute("data-wide")).toBe(false);
+    expect(dialog.getAttribute("data-tab")).toBe("mine");
+    await userEvent.click(screen.getByRole("tab", { name: "写新反馈" }));
+    expect(dialog.getAttribute("data-tab")).toBe("send");
+  });
 
-    await userEvent.click(toggle);
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
-    expect(dialog.hasAttribute("data-wide")).toBe(true);
-    expect(screen.getByRole("tab", { name: "我的反馈" }).getAttribute("aria-selected")).toBe("true");
-
-    await userEvent.click(toggle);
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(dialog.hasAttribute("data-wide")).toBe(false);
+  it("counts what waits on the reader on the My feedback tab, without renaming the tab", () => {
+    render(<Feedback port={new MockPort() as unknown as AgentPort} unread={3} onClose={() => {}} onError={() => {}} />);
+    const tab = screen.getByRole("tab", { name: "我的反馈" });
+    expect(tab.querySelector(".fbk-tab-count")!.textContent).toBe("3");
   });
 });
 
@@ -723,7 +759,7 @@ describe("capturing the window", () => {
     capture(null);
     setup();
     await ready();
-    expect(screen.getByText(/会包含窗口里看到的内容/)).toBeTruthy();
+    expect(screen.getByText(/截图会带上窗口里看到的东西/)).toBeTruthy();
     await userEvent.click(button());
     await screen.findByText(/没能截取窗口/);
     expect(document.querySelector<HTMLElement>(".fbk-veil")?.hidden).toBe(false);

@@ -13,6 +13,20 @@ beforeEach(() => vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] }))
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(3000); });
 
+/** Waits until the panel has stopped committing on its own: what opening a file
+ *  leaves behind (an entering tab's 220ms timer, a lazily loaded chunk, a
+ *  persisted list) lands at a time that depends on the machine, and none of it
+ *  is what a poll does. Four quiet 100ms windows in a row end the wait; a panel
+ *  that never goes quiet leaves the real assertion to fail. */
+async function quiet(commits: ReturnType<typeof vi.fn>) {
+  let still = 0;
+  for (let i = 0; i < 60 && still < 4; i++) {
+    commits.mockClear();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+    still = commits.mock.calls.length === 0 ? still + 1 : 0;
+  }
+}
+
 async function mount(path = "notes.md") {
   const port = new MockPort();
   const file = { path, content: "# Saved", revision: "r1" };
@@ -89,7 +103,7 @@ it("does not commit a discarded quiet read after a draft edit", async () => {
 it("leaves the rendered Workbench untouched when Markdown polls are unchanged", async () => {
   const user = userEvent.setup();
   const port = new MockPort();
-  vi.spyOn(port, "workspaceFiles").mockResolvedValue({ files: ["notes.md"], directories: [] });
+  const listed = vi.spyOn(port, "workspaceFiles").mockResolvedValue({ files: ["notes.md"], directories: [] });
   const read = vi.spyOn(port, "workspaceFile").mockResolvedValue({ path: "notes.md", content: "# Saved", revision: "r1" });
   const commits = vi.fn();
   render(<Profiler id="workbench" onRender={commits}><WorkbenchPanel port={port} workspaceRoot="/fixture"
@@ -98,9 +112,14 @@ it("leaves the rendered Workbench untouched when Markdown polls are unchanged", 
   await user.click(await screen.findByRole("button", { name: "notes.md" }));
   await screen.findByRole("heading", { name: "Saved" });
   await act(async () => {});
+  await quiet(commits);
   commits.mockClear();
-  await tick();
-  await tick();
+  const base = performance.now();
+  const seen: string[] = [];
+  for (const n of [1, 2]) {
+    await tick();
+    seen.push(`after poll ${n} (${(performance.now() - base).toFixed(0)}ms): ${commits.mock.calls.length} commits [${commits.mock.calls.map((c) => `${c[1]}@${(c[5] - base).toFixed(0)}ms`).join(",")}], file reads ${read.mock.calls.length}, listings ${listed.mock.calls.length}`);
+  }
   expect(read).toHaveBeenCalledTimes(3);
-  expect(commits).not.toHaveBeenCalled();
+  expect(commits.mock.calls.length, seen.join("; ")).toBe(0);
 });

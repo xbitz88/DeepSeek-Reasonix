@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
   drawSelection,
@@ -22,6 +22,8 @@ import { tags } from "@lezer/highlight";
 import { t } from "../i18n";
 import { editorTextSession } from "./workbench_editor_menu";
 import { textMenuKey, type OfferTextMenu } from "./workbench_text_menu";
+import { copySelection, SelectionBar, type SelectionAt } from "./SelectionBar";
+import { StudioIcon } from "./StudioIcon";
 
 // Loaded per file, so opening a Go file does not pay for every other grammar.
 const LANGUAGE: Record<string, () => Promise<Extension>> = {
@@ -68,12 +70,12 @@ const highlight = HighlightStyle.define([
 const theme = (dark: boolean) =>
   EditorView.theme(
     {
-      "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--face-code)", fontSize: "calc(12px * var(--fs-scale, 1))" },
+      "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--raised)", fontSize: "calc(12px * var(--fs-scale, 1))" },
       "&.cm-focused": { outline: "none" },
       ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.65" },
       ".cm-content": { caretColor: "var(--text)", paddingBottom: "80px" },
       ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
-      ".cm-gutters": { backgroundColor: "var(--face-code)", color: "var(--ghost)", border: "none" },
+      ".cm-gutters": { backgroundColor: "var(--raised)", color: "var(--ghost)", border: "none" },
       ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--muted)" },
       ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--overlay) 55%, transparent)" },
       "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
@@ -101,19 +103,19 @@ const theme = (dark: boolean) =>
 // The search and go-to-line panels speak the window's language.
 const phrases = () =>
   EditorState.phrases.of({
-    Find: t("查找"),
-    Replace: t("替换"),
-    next: t("下一个"),
-    previous: t("上一个"),
-    all: t("全部"),
-    "match case": t("区分大小写"),
-    regexp: t("正则"),
-    "by word": t("全词匹配"),
-    replace: t("替换"),
-    "replace all": t("全部替换"),
-    close: t("关闭"),
-    "Go to line": t("跳到行"),
-    go: t("跳转"),
+    Find: t("workbench.find"),
+    Replace: t("workbench.replace"),
+    next: t("workbench.next"),
+    previous: t("workbench.previous"),
+    all: t("common.all"),
+    "match case": t("common.match_case"),
+    regexp: t("workbench.regexp"),
+    "by word": t("workbench.whole_word"),
+    replace: t("workbench.replace"),
+    "replace all": t("workbench.replace_all"),
+    close: t("common.close"),
+    "Go to line": t("workbench.go_to_line"),
+    go: t("workbench.go"),
   });
 
 interface Props {
@@ -124,15 +126,22 @@ interface Props {
   onSave: () => void;
   readOnly?: boolean;
   onTextContextMenu?: OfferTextMenu;
+  // The line the cursor is on, one-based, whenever it moves.
+  onLine?: (line: number) => void;
+  // Hands a selected passage to the conversation from the bar under the selection.
+  onQuote?: (text: string) => void;
 }
 
 /** A file, read and edited in one place: highlighted as it is typed, with the
  *  editor's own find (Ctrl+F), go to line (Ctrl+G) and save (Ctrl+S). */
-export default function CodeEditor({ path, value, dark, onChange, onSave, readOnly = false, onTextContextMenu }: Props) {
+export default function CodeEditor({ path, value, dark, onChange, onSave, readOnly = false, onTextContextMenu, onLine, onQuote }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const handlers = useRef({ onChange, onSave, onTextContextMenu });
-  handlers.current = { onChange, onSave, onTextContextMenu };
+  const handlers = useRef({ onChange, onSave, onTextContextMenu, onLine, onQuote });
+  handlers.current = { onChange, onSave, onTextContextMenu, onLine, onQuote };
+  const [tools, setTools] = useState<SelectionAt & { from: number; to: number } | null>(null);
+  const toolTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(toolTimer.current), []);
   const language = useRef(new Compartment());
   const look = useRef(new Compartment());
   const editability = useRef(new Compartment());
@@ -152,7 +161,8 @@ export default function CodeEditor({ path, value, dark, onChange, onSave, readOn
         doc: value,
         extensions: [
           EditorView.domEventHandlers({
-            contextmenu: offer,
+            contextmenu: (event, editor) => { setTools(null); return offer(event, editor); },
+            scroll: () => { setTools(null); return false; },
             keydown: (event, editor) => textMenuKey(event) && offer(event, editor),
           }),
           lineNumbers(),
@@ -178,6 +188,24 @@ export default function CodeEditor({ path, value, dark, onChange, onSave, readOn
           ]),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) handlers.current.onChange(update.state.doc.toString());
+            if (update.docChanged || update.selectionSet) handlers.current.onLine?.(update.state.doc.lineAt(update.state.selection.main.head).number);
+            if (!update.docChanged && !update.selectionSet) return;
+            clearTimeout(toolTimer.current);
+            const sel = update.state.selection.main;
+            if (sel.empty || !handlers.current.onQuote) { setTools(null); return; }
+            // Once the selection settles: a drag moves it every frame.
+            toolTimer.current = setTimeout(() => {
+              try {
+                const at = update.view.coordsAtPos(sel.from);
+                if (!at) return;
+                const doc = update.state.doc;
+                // A selection ending at a line's first column covers none of that line.
+                const last = doc.lineAt(sel.to).from === sel.to ? sel.to - 1 : sel.to;
+                setTools({ x: at.left, top: at.top, bottom: at.bottom, floor: update.view.scrollDOM.getBoundingClientRect().top, from: doc.lineAt(sel.from).number, to: doc.lineAt(last).number, text: update.state.sliceDoc(sel.from, sel.to) });
+              } catch {
+                setTools(null);
+              }
+            }, 120);
           }),
           language.current.of([]),
           look.current.of(theme(dark)),
@@ -221,5 +249,21 @@ export default function CodeEditor({ path, value, dark, onChange, onSave, readOn
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value } });
   }, [value]);
 
-  return <div className="workbench-editor" ref={host} aria-label={t("文件内容")} />;
+  return (
+    <>
+      <div className="workbench-editor" ref={host} aria-label={t("workbench.file_contents")} />
+      {tools && onQuote && (
+        <SelectionBar at={tools} note={tools.from === tools.to ? t("workbench.line_n", { n: tools.from }) : t("workbench.lines_a_b", { a: tools.from, b: tools.to })}>
+          <button type="button" data-action-click="workbench.quote-selection" data-action-mousedown="workbench.quote-selection"
+            onMouseDown={(e) => e.preventDefault()} onClick={() => { onQuote(tools.text); setTools(null); }}>
+            <StudioIcon name="quote" /><span>{t("workbench.add_to_conversation")}</span>
+          </button>
+          <button type="button" data-action-click="workbench.text-copy" data-action-mousedown="workbench.text-copy"
+            onMouseDown={(e) => e.preventDefault()} onClick={() => { copySelection(tools.text); setTools(null); }}>
+            <StudioIcon name="copy" /><span>{t("common.copy")}</span>
+          </button>
+        </SelectionBar>
+      )}
+    </>
+  );
 }

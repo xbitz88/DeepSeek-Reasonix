@@ -2,25 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { chipLabel, fromHistory, initialState, reduce, type Item, type SessionEvent, type SessionState } from "./session";
 import type { HistoryMessage } from "../port/port";
 
-// vitest runs these in Node, where there is no localStorage. The preference
-// reader tolerates its absence by staying off, so a test that wants a receipt
-// has to supply one.
-const store = new Map<string, string>();
-(globalThis as { localStorage?: unknown }).localStorage = {
-  getItem: (k: string) => store.get(k) ?? null,
-  setItem: (k: string, v: string) => void store.set(k, v),
-  removeItem: (k: string) => void store.delete(k),
-};
-const showingReceipts = <T,>(body: () => T): T => body();
-const hidingReceipts = <T,>(body: () => T): T => {
-  store.set("rx-turn-receipt", "off");
-  try {
-    return body();
-  } finally {
-    store.delete("rx-turn-receipt");
-  }
-};
-
 const run = (evs: SessionEvent[]): SessionState => evs.reduce(reduce, initialState);
 
 describe("when this window saw the turn start", () => {
@@ -245,7 +226,7 @@ describe("a turn the user cancelled", () => {
     const s = run([partial("c1"), { kind: "turn_done", cancelled: true, err: "context canceled" } as SessionEvent]);
     expect(s.items.filter((i) => i.t === "notice" && i.level === "error")).toHaveLength(0);
     expect(s.terminal).toEqual({ kind: "cancelled" });
-    expect(s.doing).toBe("已取消");
+    expect(s.doing).toBe("common.cancelled");
   });
 
   it("still draws a genuine failure", () => {
@@ -306,38 +287,10 @@ describe("rebuilding a reopened transcript", () => {
   });
 });
 
-describe("the turn's completion receipt", () => {
-  const receipts = (s: SessionState) => s.items.filter((i) => i.t === "receipt");
-  const finish = (r: unknown): SessionEvent => ({ kind: "turn_done", receipt: r }) as SessionEvent;
-
-  it("keeps the quality summary out of the transcript", () => {
+describe("the turn's quality summary", () => {
+  it("stays out of the transcript", () => {
     const s = run([{ kind: "completion_summary", completion: { verdict: "partial", mutations: 2 } } as SessionEvent]);
     expect(s.items).toHaveLength(0);
-  });
-
-  it("sources a clean verdict instead of asserting it", () => {
-    const s = showingReceipts(() => run([finish({
-      verdict: "done", saysSomething: true,
-      changes: [{ path: "parser.go", reviewed: false }],
-      verifications: [{ command: "go test ./...", passed: true }],
-    })]));
-    expect(receipts(s)).toHaveLength(1);
-  });
-
-  it("shows the turn what it could not verify", () => {
-    const s = showingReceipts(() => run([finish({
-      verdict: "partial", saysSomething: true,
-      gaps: [{ kind: "unreviewed_change", detail: "lexer.go" }],
-    })]));
-    expect(receipts(s)).toHaveLength(1);
-  });
-
-  // The kernel decides; the window does not second-guess it. A receipt with no
-  // gaps and no clean verdict says only that the host could not judge, which a
-  // transcript that already showed every step does not need repeated.
-  it("follows the kernel on what is worth a line", () => {
-    expect(receipts(run([finish({ verdict: "incomplete", saysSomething: false })]))).toHaveLength(0);
-    expect(receipts(run([done()]))).toHaveLength(0);
   });
 });
 
@@ -522,9 +475,9 @@ describe("waiting for another session to finish writing", () => {
   // is stopped on — the same place 等你批准 goes.
   it("says what the turn is waiting on, and stops saying it when it is not", () => {
     const waiting = run([lease("workspace_lease", "warn", "Another session is writing to this workspace.")]);
-    expect(waiting.doing).toBe("等待工作区");
+    expect(waiting.doing).toBe("app.waiting_for_the_workspace");
     const gaveUp = reduce(waiting, lease("workspace_lease_abandoned", "info", "The wait ended."));
-    expect(gaveUp.doing).toBe("运行中");
+    expect(gaveUp.doing).toBe("common.running");
     expect(cards(gaveUp)).toHaveLength(1);
   });
 });
@@ -536,25 +489,6 @@ describe("repeated unclassified notices", () => {
     const cards = st.items.filter((i): i is Extract<Item, { t: "notice" }> => i.t === "notice");
     expect(cards).toHaveLength(1);
     expect(cards[0].count).toBe(3);
-  });
-});
-
-describe("the turn's verification receipt", () => {
-  const done = (receipt: unknown): SessionEvent => ({ kind: "turn_done", receipt }) as SessionEvent;
-  const card = { saysSomething: true, verdict: "unproven", gaps: [{ kind: "unverified_change" }] };
-  const receipts = (s: SessionState) => s.items.filter((i) => i.t === "receipt");
-
-  // The record is the transcript's; whether a card is drawn is decided at
-  // render time, so the preference never changes what the session holds.
-  it.each([["off", () => hidingReceipts(() => run([done(card)]))], ["default", () => run([done(card)])]])(
-    "closes the turn with the record when the preference is %s",
-    (_, go) => expect(receipts(go())).toHaveLength(1),
-  );
-
-  // The kernel still decides whether a receipt has content at all; the
-  // preference decides nothing about that.
-  it("still respects the kernel's own answer", () => {
-    expect(receipts(showingReceipts(() => run([done({ ...card, saysSomething: false })])))).toEqual([]);
   });
 });
 
@@ -675,7 +609,7 @@ describe("a question the run is still blocked on", () => {
 
   it("survives the rebuild that follows a reconnect", () => {
     const s = run([asking("ask-1"), rebuild([said("有一个技术决策需要确认：")])]);
-    expect(s.doing, "the header says the run is waiting on you").toBe("等待你回答");
+    expect(s.doing, "the header says the run is waiting on you").toBe("app.waiting_for_your_answer");
     expect(asks(s), "so the question has to still be answerable").toHaveLength(1);
     expect(asks(s)[0].ask.id).toBe("ask-1");
   });
@@ -863,9 +797,9 @@ describe("a receipt that arrives after the delivery it is for", () => {
 
 describe("chipLabel", () => {
   it("says the turn is running for a client that joined after turn_started", () => {
-    expect(chipLabel(initialState, true)).toBe("运行中");
+    expect(chipLabel(initialState, true)).toBe("common.running");
     const done = run([{ kind: "turn_started" } as SessionEvent, { kind: "turn_done" } as SessionEvent]);
-    expect(chipLabel(done, true)).toBe("运行中");
+    expect(chipLabel(done, true)).toBe("common.running");
   });
 
   it("keeps what the stream says once it has said something", () => {
@@ -874,7 +808,7 @@ describe("chipLabel", () => {
   });
 
   it("leaves a settled turn and a live one alone", () => {
-    expect(chipLabel(initialState, false)).toBe("空闲");
+    expect(chipLabel(initialState, false)).toBe("app.idle");
     const live = run([{ kind: "turn_started" } as SessionEvent]);
     expect(chipLabel(live, true)).toBe(live.doing);
   });

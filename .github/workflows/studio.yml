@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: studio-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/studio' }}
 
 jobs:
   frontend:
@@ -188,6 +188,7 @@ jobs:
           node perf/web-access.mjs
           node perf/peers-settings.mjs
           node perf/output-cap.mjs
+          node perf/tool-output-clip.mjs
           node perf/agent-run-tab.mjs
           node perf/changes-cap.mjs
           node perf/session-menu-fit.mjs

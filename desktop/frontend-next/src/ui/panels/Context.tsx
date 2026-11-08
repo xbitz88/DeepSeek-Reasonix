@@ -5,7 +5,6 @@ import { SaveNote } from "../SaveNote";
 import type { AgentPort, ContextBreakdown } from "../../port/port";
 import { pct as percent, tokens } from "../../i18n/format";
 import { pinToViewport } from "../place";
-import { useFoldBound } from "./useFoldBound";
 import { Row } from "./kit";
 import { CompactNow, type CompactAction } from "../CompactNow";
 
@@ -24,11 +23,11 @@ type Part = "system" | "tools" | "user" | "reply" | "output";
 
 function parts(): [Part, string, string][] {
   return [
-    ["system", t("系统提示"), t("基础指令、记忆、技能清单")],
-    ["tools", t("工具定义"), t("发给模型的工具清单")],
-    ["user", t("你的输入"), t("本会话中你输入的部分")],
-    ["reply", t("模型回复"), t("模型的输出")],
-    ["output", t("工具输出"), t("命令、读取、检索返回的内容")],
+    ["system", t("common.system_prompt"), t("panels.base_instructions_memory_the_skill")],
+    ["tools", t("common.tool_definitions"), t("panels.the_tool_list_sent_to")],
+    ["user", t("common.what_you_said"), t("panels.your_side_of_this_session")],
+    ["reply", t("common.model_replies"), t("panels.what_the_model_has_said")],
+    ["output", t("common.tool_output"), t("panels.what_commands_reads_and_searches")],
   ];
 }
 
@@ -82,13 +81,7 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
   // other: side by side they would be two boxes of numbers with no way to tell
   // which figure each answers for.
   const [editing, setEditing] = useState(false);
-  const [tuning, setTuning] = useState(false);
   const bar = useRef<HTMLDivElement>(null);
-  // The handle is the capacity bar's own mark, so its state lives here rather
-  // than in a control mounted beside it: an editor that owned the track would
-  // rebuild it on every open, and a bar remounted animates from zero, which
-  // reads as the session's usage jumping.
-  const fold = useFoldBound(port, ctx?.window ?? 0, onCtx);
 
   // A bubble placed once against the viewport goes stale the moment anything
   // moves it, and there is nothing useful to show mid-scroll — so it closes.
@@ -112,19 +105,16 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
   const field = settable && (
     <DeclareWindow port={port} onSet={onCtx} was={ctx.window} onDone={() => setEditing(false)} />
   );
-  const openWindow = () => {
-    setEditing((v) => !v);
-    setTuning(false);
-  };
+  const openWindow = () => setEditing((v) => !v);
   // A window nobody declared has no denominator to draw against — but the
   // number still matters, and so does what else a zero window means: it is
   // what turns automatic compaction off. Vanishing said neither.
   if (!ctx.window) {
     const missing = (
       <>
-        <Row k={t("上下文")} v={tokens(Math.round(used))} />
+        <Row k={t("common.context")} v={tokens(Math.round(used))} />
         <p className="ctxnote">
-          {t("该来源未声明窗口大小，因此无法显示已用比例，也不会自动压缩。中转服务转发的是第三方模型，其容量只有你知道。")}
+          {t("panels.nobody_has_said_how_large")}
         </p>
         {field}
         {compact && <CompactNow action={compact} />}
@@ -136,10 +126,7 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
   // placed where usage cannot reach it. There is no deadline left to count
   // down to, so the capacity row is the whole gauge rather than a footnote.
   const folds = ctx.compact_at > 0 && ctx.compact_at <= ctx.window;
-  // While the handle is held, it owns the figure: a mark that moves under the
-  // pointer while the number above it stays put is two controls disagreeing
-  // about one setting.
-  const at = fold.reading ?? ctx.compact_at;
+  const at = ctx.compact_at;
   const denom = folds ? ctx.compact_at : ctx.window;
   const pct = Math.min((used / denom) * 100, 100);
   // The kernel's own two rungs, not a second opinion: it tells the model to
@@ -160,7 +147,7 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
         <button
           className="ctxden"
           aria-expanded={editing}
-          title={t("该窗口值的来源无法确定 —— 点击可改为该模型的实际上限")}
+          title={t("panels.whoever_entered_this_window_may")}
           onClick={openWindow}
         >
           {tokens(ctx.window)}
@@ -178,9 +165,9 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
           — when the host will tidy up, and when the model simply cannot hold
           any more — so both keep a row, and each names its own denominator
           rather than collapsing into one percentage of something unstated. */}
-      <Row k={t("上下文")} v={<span className="ctxq">{tokens(Math.round(used))}</span>} />
+      <Row k={t("common.context")} v={<span className="ctxq">{tokens(Math.round(used))}</span>} />
       {compact && <CompactNow action={compact} />}
-      {!folds && <Row k={t("模型容量")} v={windowFigure} />}
+      {!folds && <Row k={t("common.model_capacity")} v={windowFigure} />}
       {!folds && editing && field}
       <div
         className="ctxbar"
@@ -188,7 +175,7 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
         ref={bar}
         tabIndex={0}
         role="group"
-        aria-label={t("上下文构成")}
+        aria-label={t("panels.what_fills_the_context")}
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}
@@ -201,8 +188,8 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
       {press && (
         <p className="ctxnote" data-press={press}>
           {press === "soon"
-            ? t("即将到达维护点，随后会自动整理上下文。")
-            : t("接近维护点，模型已经被告知要收窄接下来的工作。")}
+            ? t("panels.the_maintenance_point_is_close")
+            : t("panels.approaching_the_maintenance_point_the")}
         </p>
       )}
       {/* Capacity is the diagnosis, not the deadline: it answers "is this model
@@ -214,99 +201,22 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
               only by readers who already knew it was there, which is not the
               reader this footnote was written for. */}
           <Row
-            k={t("下次维护")}
+            k={t("panels.next_maintenance")}
             v={
               <span className="ctxq">
-                {settable ? (
-                  <button
-                    className="ctxden"
-                    data-action="compaction.advanced"
-                    aria-expanded={tuning}
-                    title={t("点这里改维护点")}
-                    onClick={() => {
-                      setTuning((v) => !v);
-                      setEditing(false);
-                    }}
-                  >
-                    {tokens(at)}
-                  </button>
-                ) : (
-                  tokens(at)
-                )}
+                {tokens(at)}
                 <em>{percent(used / at)}</em>
               </span>
             }
           />
-          <Row k={t("模型容量")} v={windowFigure} />
+          <Row k={t("common.model_capacity")} v={windowFigure} />
           {/* The fold point marked on the window it is a fraction of. Read as
               two numbers, 160k against 1M is arithmetic nobody does; read as a
               notch this far along the bar, it is the whole answer at a glance. */}
-          <div className="ctxcapbar" data-live={tuning || undefined}>
+          <div className="ctxcapbar">
             <i style={{ width: `${Math.min((used / ctx.window) * 100, 100)}%` }} />
             <b style={{ left: `${Math.min((at / ctx.window) * 100, 100)}%` }} />
-            {/* The mark, made to move. A native range brings the keyboard, the
-                touch target and the announced value with it; everything drawn
-                here is the bar that was already on screen, so the control the
-                reader grabs is the one they were already reading.
-                The track spans the window because the bar does: given its own
-                min..max the handle sat at one fraction of the track while the
-                mark sat at another, and the two drifted apart by the width of
-                everything the track had cut off. */}
-            {settable && tuning && fold.ready && (
-              <input
-                className="ctxslide"
-                type="range"
-                min={fold.step}
-                max={ctx.window}
-                step={fold.step}
-                value={Math.min(Math.max(fold.preview ?? ctx.compact_at, fold.step), ctx.window)}
-                disabled={fold.busy}
-                autoFocus
-                data-action-change="compaction.threshold"
-                data-action-pointerup="compaction.threshold"
-                data-action-keyup="compaction.threshold"
-                aria-label={t("维护点")}
-                aria-valuetext={tokens(at)}
-                onChange={(e) => fold.move(Number(e.currentTarget.value))}
-                onPointerUp={(e) => void fold.commit(Number(e.currentTarget.value))}
-                onKeyUp={(e) => {
-                  if (e.key === "Escape") return setTuning(false);
-                  void fold.commit(Number(e.currentTarget.value));
-                }}
-              />
-            )}
           </div>
-          {/* Which bound is holding, said only where it is not self-evident: a
-              fold at the window's own share explains itself, and a fold at a
-              fixed size against a window twenty times larger does not. It
-              stands down while the editor is open — the chosen mode says what
-              it does there, and two greyed paragraphs stacked on one column
-              read as one nobody finishes. */}
-          {ctx.boundary === "economic" && ctx.capacity_at > ctx.compact_at && !tuning && (
-            <p className="ctxwhy">
-              {t("维护点是固定输入量，不随窗口放大 —— 输入越大，每轮越慢。窗口那条线在 {n}。", {
-                n: tokens(ctx.capacity_at),
-              })}
-            </p>
-          )}
-          {settable && tuning && fold.ready && (
-            <div className="ctxfold">
-              {fold.error && <p className="ctxnote" data-lvl="warn">{fold.error}</p>}
-              {/* Which of the three the handle is expressing, and where the
-                  other end is — one line, because a control that explains
-                  itself in a paragraph has stopped being a control. */}
-              <p className="ctxnote">
-                {fold.preview !== null
-                  ? fold.preview >= fold.capacity
-                    ? t("松开即按窗口容量")
-                    : t("松开即生效")
-                  : fold.mode === "capacity"
-                    ? t("按窗口容量（默认）· {n}", { n: tokens(fold.capacity) })
-                    : t("自定义 {n} · 拖到最右恢复按窗口容量", { n: tokens(fold.stored) })}
-              </p>
-              <p className="ctxfine">{t("会重建运行时；任务运行中改不了。")}</p>
-            </div>
-          )}
         </div>
       )}
       {folds && editing && field}
@@ -325,7 +235,7 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
       {open && !legend && (
         <div className="ctxpop" role="tooltip" ref={place(bar)}>
           <div className="hd">
-            <span>{t("上下文构成")}</span>
+            <span>{t("panels.what_fills_the_context")}</span>
             <span className="n">{percent(pct / 100)}</span>
           </div>
           {shown.map((p) => (
@@ -336,7 +246,7 @@ export function Context({ ctx, legend = false, port, onCtx, compact }: {
               <span className="p">{percent(p.n / sum)}</span>
             </div>
           ))}
-          <p className="foot">{t("估算值，与触发压缩使用同一口径")}</p>
+          <p className="foot">{t("panels.an_estimate_measured_the_same")}</p>
         </div>
       )}
     </>
@@ -388,7 +298,7 @@ function DeclareWindow({ port, onSet, was, onDone }: {
           value={draft}
           disabled={busy}
           placeholder="131072"
-          aria-label={t("上下文窗口（tokens）")}
+          aria-label={t("panels.context_window_tokens")}
           onChange={(e) => setDraft(e.target.value.replace(/\D/g, ""))}
           onKeyDown={(e) => {
             if (e.key === "Enter") void commit();
@@ -396,14 +306,14 @@ function DeclareWindow({ port, onSet, was, onDone }: {
           }}
         />
         <button data-action="context.window-tokens" disabled={busy || !draft || Number(draft) === was} onClick={() => void commit()}>
-          {t("保存")}
+          {t("common.save")}
         </button>
       </div>
       <SaveNote note={note} />
       <p className="ctxnote">
         {t(was > 0
-          ? "只改当前这个模型，同一个来源下的其它模型不动。填模型文档写的上下文上限，不是最大输出。"
-          : "填写模型文档中的上下文上限，而非最大输出长度。")}
+          ? "panels.applies_to_this_model_alone"
+          : "panels.the_context_ceiling_from_the")}
       </p>
     </div>
   );

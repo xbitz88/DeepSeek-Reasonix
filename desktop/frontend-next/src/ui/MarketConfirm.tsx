@@ -2,14 +2,15 @@ import { useState } from "react";
 import { t } from "../i18n";
 import type { MarketPlan } from "../port/port";
 import { Candidate, ORDER, PreviewCut } from "./AddPlugin";
+import { StudioIcon } from "./StudioIcon";
 
 // Titled for what a person has to do with each group, not for what the kernel
 // fears: a high grade here is as often "many skills from one address" as it is
 // "a process starts".
 const GROUP_TITLE: Record<string, string> = {
-  high: "以下项目需要逐项看过再安装",
-  medium: "以下项目会改变可用能力",
-  low: "以下项目仅添加文件",
+  high: "ext.read_each_of_these_before",
+  medium: "ext.these_change_what_is_available",
+  low: "ext.these_only_add_files",
 };
 
 interface Props {
@@ -37,41 +38,46 @@ export function PlanConfirm({ slug, plan, busy, error, onCancel, onInstall, own 
     (g) => g.actions.length > 0,
   );
   return (
-    <div className="mkt addpkg" data-stage="confirm" aria-busy={busy}>
+    <div className="mkt addpkg mkc" data-stage="confirm" aria-busy={busy}>
+      <div className="mkc-head">
+        <b>{t("ext.name_version_will_install_the", { name: slug, version: plan.version })}</b>
+        <button type="button" className="mkc-x" data-action="market.cancel" aria-label={t("ext.close_install_confirmation")} title={t("ext.close_install_confirmation")} disabled={busy} onClick={onCancel}>
+          <StudioIcon name="close" />
+        </button>
+      </div>
       {plan.unreviewed && (own ? (
         <div className="find" data-lvl="warn" data-unreviewed="">
-          <span className="t">{t("未审核 · 仅你可见")}</span>
-          <span className="why">{t("这是你自己发布、还没有通过审核的版本。安装会核对与这次预览相同的内容摘要，内容在确认后有变化就拒绝安装。")}</span>
+          <span className="t">{t("ext.unreviewed_visible_only_to_you")}</span>
+          <span className="why">{t("ext.this_is_your_own_version")}</span>
         </div>
       ) : (
         <div className="find" data-lvl="warn" data-unreviewed="">
-          <span className="t">{t("你选择了信任这个发布者")}</span>
-          <span className="why">{t("以下是来源现在提供的内容，可能与审核时不同。确认后内容若有变化，安装会被拒绝。")}</span>
+          <span className="t">{t("ext.you_chose_to_trust_this")}</span>
+          <span className="why">{t("ext.this_is_what_the_source")}</span>
         </div>
       ))}
-      <div className="find">
-        <span className="t">{t("{name} {version} 将安装以下内容", { name: slug, version: plan.version })}</span>
-        <span className="why">
-          {plan.unreviewed ? t("内容摘要：{digest}", { digest: plan.contentDigest ?? "" }) : t("已按内容摘要核对：与审核时固定的版本一致。")}
-        </span>
+      <div className="find mkc-check" data-pinned={plan.unreviewed ? undefined : ""}>
+        {!plan.unreviewed && <span className="t"><StudioIcon name="check" />{t("ext.checked_by_content_digest_identical")}</span>}
+        {plan.unreviewed && <span className="why">{t("ext.content_digest_digest", { digest: plan.contentDigest ?? "" })}</span>}
+        {!plan.unreviewed && plan.contentDigest && <code className="mkc-digest">{plan.contentDigest}</code>}
         {/* An MCP entry pins how a server is started, not what it fetches
             or answers with once running; saying otherwise would be believed. */}
         {actions.some((a) => a.kind === "mcp") && (
-          <span className="why">{t("MCP 服务只固定了启动方式与连接地址；它启动后自行下载或远端提供的代码不在固定范围内。")}</span>
+          <span className="why">{t("ext.for_an_mcp_server_only")}</span>
         )}
       </div>
       {many && (
         <div className="find mkt-many" data-lvl="warn">
-          <span className="t">{t("这个来源包含 {n} 个技能，会全部安装", { n: skillTotal })}</span>
+          <span className="t">{t("ext.this_source_holds_n_skills", { n: skillTotal })}</span>
           <ul className="mkt-names">
             {skills.map((a, i) => (
               <li key={`${a.name}:${i}`}>{a.name}</li>
             ))}
-            {skillTotal > skills.length && <li>{t("还有 {n} 个技能未显示", { n: skillTotal - skills.length })}</li>}
+            {skillTotal > skills.length && <li>{t("ext.n_more_skills_are_not", { n: skillTotal - skills.length })}</li>}
           </ul>
           <label className="mkt-seen">
             <input type="checkbox" data-action="market.confirm-many" disabled={busy} checked={seen} onChange={(e) => setSeen(e.target.checked)} />
-            {t("我已看过这 {n} 个技能，全部安装", { n: skillTotal })}
+            {t("ext.i_have_read_these_n", { n: skillTotal })}
           </label>
         </div>
       )}
@@ -90,12 +96,12 @@ export function PlanConfirm({ slug, plan, busy, error, onCancel, onInstall, own 
         </div>
       ))}
       <div className="acts">
-        <span className="note">{t("安装到「我的」，所有项目均可使用")}</span>
+        <span className="note">{t("ext.install_to_mine_available_in")}</span>
         <button className="act" data-action="market.cancel" disabled={busy} onClick={onCancel}>
-          {t("返回")}
+          {t("common.back")}
         </button>
         <button className="act" data-action="market.install" data-primary disabled={busy || (many && !seen)} onClick={onInstall}>
-          {t(busy ? "安装中…" : "安装")}
+          {t(busy ? "ext.installing" : "ext.install")}
         </button>
       </div>
       {error && <div className="why" role="alert">{error}</div>}

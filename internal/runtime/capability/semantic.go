@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/provider"
@@ -172,6 +173,7 @@ func (r *SemanticRouter) callModel(ctx context.Context, input string, candidates
 		if usage == nil {
 			return
 		}
+		provider.ObserveAuxiliaryUsage(ctx, usage)
 		if (usage.PromptTokens > 0 || usage.CompletionTokens > 0) && r.Audit != nil {
 			// Host-side audit only: cost is estimated from the rate card and never
 			// enters the model request. Prefer CostQuote when wiring new audit sinks.
@@ -300,6 +302,11 @@ func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= n {
 		return s
+	}
+	// n counts bytes; step back to a rune start so a multi-byte character
+	// (a Chinese skill description, say) is not cut in half.
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "…"
 }

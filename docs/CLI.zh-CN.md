@@ -269,7 +269,7 @@ reasonix run "运行测试" --output-format stream-json
 }
 ```
 
-`permission_denials` 列出本次运行的权限门拒绝的调用，没有被拒时为空数组；被拒一般不改变退出码；`permission.untrusted_folder` 退出 `4`（指定 `--fail-on-unverified` 时为 `3`）。
+`permission_denials` 列出本次运行的权限门拒绝的调用，没有被拒时为空数组；被拒一般不改变退出码；`permission.untrusted_folder` 退出 `4`。
 同一个 `code` 也随被拒的工具结果出现：`stream-json` 里是 `refusalCode`，`--events-jsonl`
 里是 `refusal_code`。
 
@@ -316,7 +316,6 @@ reasonix run "运行测试" --output-format stream-json
 | `0` | 模型已结束，包括有调用被拒或就绪检查未满足的情况。 |
 | `1` | 运行失败：模型服务、配置、上限或取消。 |
 | `2` | 命令行参数无效。 |
-| `3` | 指定了 `--fail-on-unverified`，且最终就绪检查未满足，或因文件夹未被信任而编辑和命令被拒绝。 |
 | `4` | 文件夹未被信任，编辑和命令被拒绝，任务没有完成。用 `reasonix trust --dir <folder>` 信任它，或明知故犯地传 `--permission-mode`。 |
 
 ### 脱敏机器接口
@@ -366,6 +365,9 @@ ID，需要一并保留该私有身份密钥。任务仍在运行时
 `finished_at` 为空；只有任务已经结束并且持久化产物存在时，才会输出
 `artifact_complete=true`。没有 live session lease 的 `running` 记录会显示为
 `interrupted`；再次打开该 session 时也会自动修复持久化生命周期状态。
+
+lease 探针无法判定是否有 runtime 持有该 session 时（lease lock 或 sidecar 不可读），
+`task list` 把 `running` 记录显示为 `unknown`，`session list` 把状态显示为 `unknown`。
 
 Schema version 1 的兼容规则：
 

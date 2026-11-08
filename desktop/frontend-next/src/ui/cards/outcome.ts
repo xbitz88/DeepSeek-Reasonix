@@ -19,7 +19,7 @@ export function toolFailureLabel(tool: Tool): string {
   if (execution?.state && execution.state !== "completed") return execution.state;
   // The host names which refusal this was; "失败" is what is left when nobody did.
   if (tool.refusalCode) return tool.refusalCode;
-  return t("失败");
+  return t("common.failed");
 }
 
 // What the host's refusal code means, in the reader's language; empty when the
@@ -40,6 +40,10 @@ export function toolErrorDetail(tool: Tool): string {
     case "video.ffmpeg_missing":
     case "video.unsupported_container":
     case "video.too_large":
+    case "shell.mixed_mutation_verification":
+    case "shell.inline_interpreter_not_last":
+    case "batch.skipped_after_failed_change":
+    case "batch.check_after_stopped_call":
       if (toolRefusalReason(tool)) return "";
   }
   return tool.err ?? "";

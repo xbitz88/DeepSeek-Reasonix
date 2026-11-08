@@ -45,23 +45,16 @@ type agentConfig struct {
 	maxSubagentDepth int
 	providerRetries  int
 	// contextWindow and compactRatio decide when at most one provider-visible
-	// checkpoint is installed; recentKeep and archiveDir shape what it keeps.
+	// checkpoint is installed; archiveDir is where the folded span is written.
 	contextWindow int
 	compactRatio  float64
-	recentKeep    int
 	archiveDir    string
 	budgets       CompactionBudgets
 }
 
-// CompactionBudgets are the fold's user-owned bounds: what it may hold
-// verbatim, and how small its result must be. A zero field selects the
+// CompactionBudgets are the fold's user-owned bounds: how small its result
+// must be. A zero field selects the
 // built-in default, so an unconfigured agent behaves exactly as before.
 type CompactionBudgets struct {
-	UserTurnKeepTokens     int
-	FirstTurnPinTokens     int
 	CheckpointCeilingRatio float64
-	// ContextSoftLimitTokens is the economic maintenance boundary: the visible
-	// input size at which replaying the prompt each round stops being worth it,
-	// whatever window the provider declares. Negative disables that boundary.
-	ContextSoftLimitTokens int
 }

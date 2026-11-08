@@ -63,7 +63,6 @@ type builder struct {
 	pendingMgr         *sidecar.Manager // sidecars no RuntimeSet owns yet
 	providers          providerStage
 	model              modelSelection
-	keep               agent.KeepPolicy
 	session            sessionRuntime
 	balanceClient      *http.Client
 	keyedClient        *http.Client // carries provider keys; refuses cross-origin redirects
@@ -98,13 +97,11 @@ type toolStage struct {
 	hookRunner  *hook.Runner
 	roles       roleWiring
 	sub         subagentConfig
-	taskTool    *delegation.TaskTool
+	runner      *delegation.Runner
 	skillRun    *skillSubagents
 	runners     skillRunners
 	cmds        []command.Command
 	caps        *capabilitySurface
-	candidates  *candidateApproval // nil unless best_of_n is offered
-	isolation   *isolationWiring   // nil unless worktree isolation is offered
 	// mcpSchemaKnown names the configured servers whose tools were known at
 	// registration, the only ones an always-load can show this session.
 	mcpSchemaKnown map[string]bool
@@ -159,8 +156,6 @@ func (b *builder) build(ctx context.Context, opts Options) (*BuildResult, error)
 		return nil, err
 	}
 	constructed = ctrl
-	b.tools.candidates.bind(ctrl)
-	b.tools.isolation.bind(ctrl)
 	res, err := b.freeze(ctrl)
 	if err == nil {
 		if cancelErr := detach(); cancelErr != nil {
@@ -258,7 +253,6 @@ func (b *builder) load() error {
 	if b.model, err = selectModel(opts, cfg, b.providers.extension); err != nil {
 		return err
 	}
-	b.keep = agentKeepPolicy(cfg.Agent.Keep)
 
 	migrations.report(b.sink, cfg)
 	b.timer.mark("config")
@@ -287,7 +281,8 @@ func (b *builder) load() error {
 	if opts.resolvedShell != nil {
 		b.shell = *opts.resolvedShell
 	} else {
-		b.shell = resolveShellWithNotice(opts, cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, cfg.Tools.Shell.Args, b.stderr, b.sink)
+		confine := sandbox.BashConfine(effectiveBashMode(opts, cfg), opts.roots().SandboxDir())
+		b.shell = resolveShellWithNotice(opts, cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, cfg.Tools.Shell.Args, confine, b.stderr, b.sink)
 	}
 	// Record the resolved interpreter for diagnostics, staying at Debug because
 	// headless `run` must leave stderr empty unless --debug is passed. A launch
@@ -304,9 +299,9 @@ func (b *builder) load() error {
 // resolveShellWithNotice keeps shell-discovery warnings on stderr for CLI
 // diagnostics and also reports them through the boot sink, where the settings
 // surface can show which interpreter actually runs.
-func resolveShellWithNotice(opts Options, prefer, path string, args []string, stderr io.Writer, sink event.Sink) sandbox.Shell {
+func resolveShellWithNotice(opts Options, prefer, path string, args []string, confine func(string) bool, stderr io.Writer, sink event.Sink) sandbox.Shell {
 	var warnings strings.Builder
-	d := sandbox.ShellDiscovery{Prefer: prefer, Path: path, Args: args, Warn: io.MultiWriter(stderr, &warnings), ProofDir: opts.roots().CacheDir()}
+	d := sandbox.ShellDiscovery{Prefer: prefer, Path: path, Args: args, Confine: confine, Warn: io.MultiWriter(stderr, &warnings), ProofDir: opts.roots().CacheDir()}
 	if opts.tuneShell != nil {
 		opts.tuneShell(&d)
 	}
@@ -380,7 +375,6 @@ func (b *builder) wireTools() error {
 	addAdvisor(t.reg, cfg, b.proxy, b.sink)
 	addWebSearch(t.reg, cfg, b.proxy, b.sink)
 	addFetchChain(t.reg, cfg, b.proxy, b.sink)
-	b.addBestOf()
 	if cfg.Agent.CodeMode {
 		t.reg.Add(script.New())
 	}
@@ -414,7 +408,7 @@ func (b *builder) wireTools() error {
 	}
 
 	t.roles = roleWiring{cfg: cfg, roots: b.roots, resolver: b.providers.effective, extension: b.providers.extension,
-		proxy: b.proxy, sink: b.sink, gate: t.gate, reg: t.reg, keep: b.keep, hooks: t.hookRunner, checkTargetAccess: t.env.targetAccessCheck()}
+		proxy: b.proxy, sink: b.sink, gate: t.gate, reg: t.reg, hooks: t.hookRunner, checkTargetAccess: t.env.targetAccessCheck()}
 	t.sub = newSubagentConfig(opts, cfg, b.model.entry, b.model.name, b.providers.effective, b.proxy, b.prompt.skillStore)
 	if t.sub.inheritedEffortDropped {
 		report(b.sink, event.Event{
@@ -424,11 +418,10 @@ func (b *builder) wireTools() error {
 			Detail: fmt.Sprintf("Inherited subagent effort %q is not supported by the current execution model %q; subagents that follow it will use the provider/model default effort. The persisted setting was not changed.", firstNonEmpty(cfg.Agent.RoleEfforts["subagent"], cfg.Agent.SubagentEffort), b.model.ref),
 		})
 	}
-	t.taskTool, t.skillRun = t.roles.delegation(delegationInputs{opts: opts, sub: t.sub, exec: b.execProv, entry: b.model.entry,
+	t.runner, t.skillRun = t.roles.delegation(delegationInputs{opts: opts, sub: t.sub, exec: b.execProv, entry: b.model.entry,
 		modelName: b.model.name, root: root, maxSteps: t.maxSteps, delivery: b.model.delivery, store: subagentStore,
 		session: b.session, bashEnforced: env.bash.Enforce, extraRoots: b.workspaceExtraRoots(), childTools: childViewImage(cfg, env, root)})
-	b.addIsolation()
-	registerSessionTools(t.reg, opts.Ablation, b.roots, b.session.dir, b.prompt.memory.Store)
+	registerSessionTools(t.reg, opts.Ablation, b.roots, b.session.dir, b.prompt.memory.Store, b.cfg.MemoryProactive())
 	if opts.NativeSurfaces {
 		t.reg.Add(agent.NewRenderSurfaceTool())
 	}
@@ -477,18 +470,11 @@ func (b *builder) controller() (*control.Controller, error) {
 	}
 	reportDormantPermissionRules(b.sink, b.cfg, ctrl)
 	b.ext.publish(ctrl)
-	// Task and fleet sub-agents share the root agent's recovery checkpoint.
-	if t.taskTool != nil {
-		if g := ctrl.Executor(); g != nil {
-			t.taskTool.WithRecoveryGate(g.RecoveryGate())
-		}
-	}
 	if t.caps.runtime != nil {
 		ctrl.SetCapabilityProxyTools(t.caps.runtime.ConnectedProxyTools)
 	}
-	// The task tool was built before the capability runtime existed.
-	if t.taskTool != nil && t.caps.runtime != nil {
-		t.taskTool.WithCapabilityRuntime(t.caps.runtime)
+	if t.caps.runtime != nil {
+		t.runner.SetCapabilityRuntime(t.caps.runtime)
 	}
 	router := t.roles.semanticRouter(t.sub, b.execProv, b.model.ref, b.model.entry.Price, t.caps.audit)
 	ctrl.WireCapabilityRouting(b.cfg.Plugins, t.caps.specs, router, t.caps.audit)
@@ -520,7 +506,6 @@ func (b *builder) executor() *agent.Agent {
 		MaxSteps:       t.maxSteps,
 		MaxStepsKey:    b.opts.MaxStepsKey,
 		Temperature:    cfg.Agent.Temperature,
-		TaskBudget:     taskBudgetFromConfig(cfg),
 		ProgressWatch:  control.ProgressWatchFromConfig(cfg),
 		Pricing:        entry.Price,
 		ModelRef:       b.model.ref,
@@ -536,26 +521,20 @@ func (b *builder) executor() *agent.Agent {
 		WriteScheduler:     t.sub.scheduler,
 		WriteWorkspaceRoot: b.root, ExtraWorkspaceRoots: b.workspaceExtraRoots(), WorkspaceScanLimit: b.opts.WorkspaceScanLimit, WorkspaceVCS: b.prompt.workspaceVCS, WorkspaceUnversioned: b.prompt.workspaceVCS == "", RenderRoot: renderRoot(t.browser, entry, b.root),
 		ProjectChecks: b.prompt.projectChecks, ProjectSensitivePaths: b.prompt.sensitivePaths,
-		EvidenceSeal:                 t.env.evidenceSeal,
-		AgentPreset:                  b.model.preset,
-		DeliveryProfile:              b.model.delivery,
-		WaiveOwedChecks:              cfg.WaivesOwedChecks(b.model.delivery) && !b.opts.HoldOwedChecks,
-		Ablation:                     b.opts.Ablation,
-		WorkspaceLease:               b.session.lease,
-		CapabilityLedger:             t.caps.ledger,
-		CapabilityAudit:              t.caps.audit,
-		ContextWindow:                entry.ContextWindow,
-		CompactRatio:                 cfg.Agent.CompactRatio,
-		ContextEditing:               cfg.Agent.ContextEditing,
-		RecentKeep:                   cfg.Agent.RecentKeep,
-		CompactionBudgets:            compactionBudgets(cfg),
-		ArchiveDir:                   b.roots.ArchiveDir(),
-		KeepPolicy:                   b.keep,
-		ReasoningLanguage:            cfg.ReasoningLanguage(),
-		SubagentDepth:                0,
-		MaxSubagentDepth:             t.sub.maxDepth,
-		ProviderRetries:              agent.ProviderRetriesFromConfig(cfg.Agent.MaxProviderRetries),
-		MissingReasoningWarnStateDir: b.roots.MissingReasoningWarnStateDir(),
+		AgentPreset:       b.model.preset,
+		DeliveryProfile:   b.model.delivery,
+		Ablation:          b.opts.Ablation,
+		WorkspaceLease:    b.session.lease,
+		CapabilityLedger:  t.caps.ledger,
+		CapabilityAudit:   t.caps.audit,
+		ContextWindow:     entry.ContextWindow,
+		CompactRatio:      cfg.Agent.CompactRatio,
+		CompactionBudgets: compactionBudgets(cfg),
+		ArchiveDir:        b.roots.ArchiveDir(),
+		ReasoningLanguage: cfg.ReasoningLanguage(),
+		SubagentDepth:     0,
+		MaxSubagentDepth:  t.sub.maxDepth,
+		ProviderRetries:   agent.ProviderRetriesFromConfig(cfg.Agent.MaxProviderRetries),
 	}, b.sink)
 	ag.SetNativeVideo(nativeVideoSource(entry, cfg))
 	return ag
@@ -578,7 +557,6 @@ func (b *builder) controllerOptions(runner agent.Runner, executor *agent.Agent, 
 	providerIdentity := ResolveProviderBuildIdentity(entry, b.proxy, nil)
 	return control.Options{
 		Observe:                        b.observeRun(),
-		TaskBudget:                     taskBudgetFromConfig(cfg),
 		GoalTokenBudget:                cfg.Agent.GoalTokenBudget,
 		Runner:                         runner,
 		Executor:                       executor,
@@ -644,7 +622,6 @@ func (b *builder) controllerOptions(runner agent.Runner, executor *agent.Agent, 
 		ResponseLanguage:       cfg.ResponseLanguage(),
 		ReasoningLanguage:      cfg.ReasoningLanguage(),
 		TurnNarration:          cfg.TurnNarration(),
-		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
 		EmbeddedDiffDetection:  cfg.EmbeddedDiffDetectionEnabled(),
 		Shell:                  b.shell,
 		ApprovalTimeout:        opts.ApprovalTimeout,

@@ -6,7 +6,6 @@ package control
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reasonix/internal/state/sessionstore"
 	"slices"
@@ -23,10 +22,6 @@ import (
 )
 
 func turnOutcome(err error) string {
-	var readinessErr *agent.FinalReadinessError
-	if errors.As(err, &readinessErr) {
-		return event.TurnOutcomeFinalReadiness
-	}
 	if info, ok := agent.InspectRunPause(err); ok &&
 		(info.Kind == agent.PauseKindNoProgress || info.Kind == agent.PauseKindPerseveration) {
 		return event.TurnOutcomeNoProgress
@@ -262,6 +257,7 @@ func (c *Controller) runReady(ctx context.Context, input string) (err error) {
 	ctx, marker = c.beginTurn(ctx, startMessages, true)
 	ctx = c.announceAuthoredTurn(ctx, rawInput, startMessages)
 	ctx = c.withPlannerTurnMetadata(ctx, rawInput, false)
+	ctx = c.prepareTurnRootBudget(ctx)
 	err = c.runWithRunner(ctx, c.withCapabilityRoute(ctx, input, rawInput))
 	return err
 }
@@ -296,15 +292,21 @@ func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, 
 		return "", fmt.Errorf("subagent skill runner is unavailable for %q", name)
 	}
 
-	c.maybeSessionStart(ctx)
-	parentSession := c.parentSessionID()
-	ctx = agent.WithParentSession(ctx, parentSession)
-	ctx = jobs.WithSession(ctx, parentSession)
-	ctx, turnImgs := c.withTurnImages(ctx, task)
-	ctx = langpref.WithResponseLanguagePreference(ctx, c.display.responseLanguage)
-	ctx = langpref.WithReasoningLanguagePreference(ctx, c.display.reasoningLanguage)
-	ctx = agent.WithSubagentDepth(ctx, 0)
-	answer, err := runner(ctx, sk, c.imageRoutingPrefix(turnImgs)+task, skill.SubagentRunOptions{HostInitiated: true})
+	var answer string
+	err := c.runSynchronousTurn(ctx, nil, func(ctx context.Context) error {
+		c.maybeSessionStart(ctx)
+		parentSession := c.parentSessionID()
+		ctx = agent.WithParentSession(ctx, parentSession)
+		ctx = jobs.WithSession(ctx, parentSession)
+		ctx, turnImgs := c.withTurnImages(ctx, task)
+		ctx = langpref.WithResponseLanguagePreference(ctx, c.display.responseLanguage)
+		ctx = langpref.WithReasoningLanguagePreference(ctx, c.display.reasoningLanguage)
+		ctx = agent.WithSubagentDepth(ctx, 0)
+		ctx = c.prepareTurnRootBudget(ctx)
+		var err error
+		answer, err = runner(ctx, sk, c.imageRoutingPrefix(turnImgs)+task, skill.SubagentRunOptions{HostInitiated: true})
+		return err
+	})
 	if err != nil {
 		return "", err
 	}
@@ -313,14 +315,15 @@ func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, 
 
 func (p plannerPlanApprover) RunWithPlannerApproval(ctx context.Context, plan string, run func(context.Context) error) error {
 	c := p.c
-	allow, _, err := c.requestApproval(ctx, approvalRequest{tool: planApprovalTool, reason: "Planner requested host approval before execution."})
+	steps := PlanTodosJSON(plan)
+	allow, _, err := c.requestApproval(ctx, planApprovalRequest(steps, "Planner requested host approval before execution."))
 	if err != nil {
 		return err
 	}
 	if !allow {
 		return nil
 	}
-	todoArgs := c.seedPlanTodos(plan)
+	todoArgs := c.seedTodoArgs(steps)
 	execStart := c.sessionMessageCount()
 	c.approval.setPlanAutoApprove(true)
 	defer c.approval.setPlanAutoApprove(false)
