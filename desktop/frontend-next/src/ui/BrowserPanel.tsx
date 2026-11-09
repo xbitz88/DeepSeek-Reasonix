@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { ArrowLeft, ArrowRight, ExternalLink, Globe, RotateCw } from "lucide-react";
 import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import type { AgentPort, BrowserTab } from "../port/port";
@@ -28,20 +29,14 @@ function normalise(value: string): string | null {
   }
 }
 
-function startPage(scheme: "light" | "dark"): string {
-  const light = scheme === "light";
-  const page = light ? "#f6f7f4" : "#171817";
-  const text = light ? "#242622" : "#e9eae5";
-  const muted = light ? "#747970" : "#90958d";
-  const surface = light ? "#ffffff" : "#1c1d1b";
-  const border = light ? "#dfe1db" : "#2c2f2b";
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-    :root{color-scheme:${scheme};font-family:Inter,"Noto Sans SC",system-ui,sans-serif;background:${page};color:${text}}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;background:${page}}
-    main{width:min(520px,100%);text-align:center}.mark{width:42px;height:42px;margin:0 auto 18px;display:grid;place-items:center;border:1px solid ${border};border-radius:12px;background:${surface};color:#7188c4;font-size:22px}
-    h1{margin:0 0 8px;font-size:18px;font-weight:620;letter-spacing:-.02em}p{margin:0;color:${muted};font-size:13px;line-height:1.7}
-    .hint{margin-top:22px;padding:11px 14px;border:1px solid ${border};border-radius:9px;background:${surface};color:${muted};font-size:12px;text-align:left}
-  </style></head><body><main><div class="mark">◎</div><h1>${t("common.built_in_browser")}</h1><p>${t("workbench.enter_an_address_above_to")}</p><div class="hint">${t("workbench.some_sites_do_not_allow")}</div></main></body></html>`;
+function BrowserStartPage({ scheme }: { scheme: "light" | "dark" }) {
+  return <div className="studio-browser-frame studio-browser-start" title={t("workbench.reasonix_built_in_browser")} style={{ colorScheme: scheme }}>
+    <div><Globe className="browser-start-mark" size={26} aria-hidden="true" />
+      <h1>{t("common.built_in_browser")}</h1>
+      <p>{t("workbench.enter_an_address_above_to")}</p>
+      <p className="browser-start-hint">{t("workbench.some_sites_do_not_allow")}</p>
+    </div>
+  </div>;
 }
 
 interface ManualProps {
@@ -63,7 +58,6 @@ export function ManualBrowserPanel({ id, hidden, onAddress, onExternal, scheme }
   const [loading, setLoading] = useState(false);
   const current = history[index] ?? START;
   const internal = current === START;
-  const srcDoc = useMemo(() => startPage(scheme), [scheme]);
   useEffect(() => {
     onAddress(id, internal ? "" : new URL(current).hostname);
   }, [id, current, internal, onAddress]);
@@ -113,32 +107,31 @@ export function ManualBrowserPanel({ id, hidden, onAddress, onExternal, scheme }
     <section className="studio-browser" hidden={hidden} aria-label={t("workbench.built_in_browser")}>
       <form className="studio-browser-toolbar" onSubmit={submit} data-action-submit="browser.navigate">
         <button type="button" data-action="browser.back" onClick={() => move(index - 1)} disabled={index === 0} aria-label={t("workbench.back")} title={t("workbench.back")}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m9.5 3-5 5 5 5M5 8h7" /></svg>
+          <ArrowLeft size={16} />
         </button>
         <button type="button" data-action="browser.reload" onClick={() => setReload((value) => value + 1)} aria-label={t("common.re_freeze")} title={t("common.re_freeze")}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.7 6A5 5 0 1 0 13 9.5M12.7 6V2.8M12.7 6H9.5" /></svg>
+          <RotateCw size={16} />
         </button>
         <label className="studio-browser-address" data-invalid={invalid ? "" : undefined}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.3" /><path d="M2.8 8h10.4M8 2.7c1.5 1.5 2.2 3.2 2.2 5.3S9.5 11.8 8 13.3C6.5 11.8 5.8 10.1 5.8 8S6.5 4.2 8 2.7Z" /></svg>
+          <Globe size={16} />
           <input data-action-change="browser.address" data-action-keydown="browser.navigate" value={input} onKeyDown={commitAddress} onChange={(event) => { setInput(event.target.value); setInvalid(false); }} aria-label={t("workbench.web_address")} spellCheck={false} autoCapitalize="off" />
         </label>
         <button type="submit" className="studio-browser-go" aria-label={t("workbench.open_page")}>{t("common.open")}</button>
         <button type="button" data-action="browser.external" onClick={() => !internal && onExternal(current)} disabled={internal} aria-label={t("workbench.open_in_external_browser")} title={t("workbench.open_in_external_browser")}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5" /><path d="M7 4H3v9h9V9" /></svg>
+          <ExternalLink size={16} />
         </button>
       </form>
       {invalid && <p className="studio-browser-error" role="alert">{t("workbench.enter_a_valid_http_or")}</p>}
-      <iframe
+      {internal ? <BrowserStartPage scheme={scheme} /> : <iframe
         key={`${current}:${reload}`}
         className="studio-browser-frame"
         title={t("workbench.reasonix_built_in_browser")}
-        src={internal ? undefined : current}
-        srcDoc={internal ? srcDoc : undefined}
+        src={current}
         sandbox="allow-scripts allow-forms allow-popups"
         referrerPolicy="no-referrer"
         onLoad={() => setLoading(false)}
         onError={() => setLoading(false)}
-      />
+      />}
       {/* Not a hint at an icon somewhere else: a site that refuses to be framed
           shows the shell's own "refused to connect", and the way out has to be
           beside it. */}
@@ -312,10 +305,10 @@ function AgentBrowserView({ tabs, shown, showTabs = true, onOpenDocument }: { ta
           ))}
         </div>}
         <div className="bnav">
-          <button className="bbtn" data-action="browser.control" data-target={current?.id} data-value="back" aria-label={t("workbench.back")} onClick={() => control("back")}>←</button>
-          <button className="bbtn" data-action="browser.control" data-target={current?.id} data-value="forward" aria-label={t("workbench.forward")} onClick={() => control("forward")}>→</button>
-          <button className="bbtn" data-action="browser.control" data-target={current?.id} data-value="reload" aria-label={t("common.reload")} onClick={() => control("reload")}>↻</button>
-          <button className="bbtn" data-action="browser.external" disabled={!documentPath && !/^https?:\/\//i.test(current?.url ?? "")} aria-label={documentPath ? t("workbench.open_this_file_with_the") : t("workbench.open_this_page_in_the")} title={documentPath ? t("workbench.open_this_file_with_the") : t("workbench.open_this_page_in_the")} onClick={() => (documentPath ? openDocument() : current && void host().openExternal(current.url))}>↗</button>
+          <button className="bbtn" data-action="browser.control" data-target={current?.id} data-value="back" aria-label={t("workbench.back")} title={t("workbench.back")} onClick={() => control("back")}><ArrowLeft size={16} /></button>
+          <button className="bbtn" data-action="browser.control" data-target={current?.id} data-value="forward" aria-label={t("workbench.forward")} title={t("workbench.forward")} onClick={() => control("forward")}><ArrowRight size={16} /></button>
+          <button className="bbtn" data-action="browser.control" data-target={current?.id} data-value="reload" aria-label={t("common.reload")} title={t("common.reload")} onClick={() => control("reload")}><RotateCw size={16} /></button>
+          <button className="bbtn" data-action="browser.external" disabled={!documentPath && !/^https?:\/\//i.test(current?.url ?? "")} aria-label={documentPath ? t("workbench.open_this_file_with_the") : t("workbench.open_this_page_in_the")} title={documentPath ? t("workbench.open_this_file_with_the") : t("workbench.open_this_page_in_the")} onClick={() => (documentPath ? openDocument() : current && void host().openExternal(current.url))}><ExternalLink size={16} /></button>
           <form className="baddr" data-action="browser.navigate" data-target={current?.id} onSubmit={go}>
             <input data-action="browser.navigate" data-target={current?.id} value={address} spellCheck={false} aria-label={t("workbench.address")} onChange={(event) => { setAddress(event.target.value); setRefused(""); }} />
           </form>
